@@ -4,10 +4,6 @@
   <img src="utils/resources/help/images/welcome_banner.webp" width="600" alt="INOOR Banner"/>
 </p>
 
-<!-- small centered caption a few pixels below the banner -->
-<p style="text-align:center; margin-top:8px; font-size:6px; line-height:1; color:#666; font-family:system-ui, Arial, sans-serif;">
-  <small>INO Timelaps by Saeid Karimi</small>
-</p>
 
 ## Key Features
 (Also a Help tab is available to guide users through the application.)
@@ -96,5 +92,8 @@ python main.py
 *   **IUT Team Members:** Saeid Karimi, Parisa Hashemi
 *   **Special Thanks:** Hamed Altafi, Dr. Reza Rezaei
 
-
+<!-- small centered caption a few pixels below the banner -->
+<p style="text-align:center; margin-top:8px; font-size:6px; line-height:1; color:#666; font-family:system-ui, Arial, sans-serif;">
+  <small>INO Timelaps by Saeid Karimi</small>
+</p>
 *Developed for the Iranian National Observatory (INO) at the Isfahan University of Technology (IUT).*
