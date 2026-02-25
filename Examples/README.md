@@ -9,7 +9,7 @@ This directory presents practical applications of the **INOOR** software for rea
 **PSR J2215+5135** is a well-known "redback" millisecond pulsar binary system. In such systems, the pulsar's intense radiation heats the inward-facing side of its low-mass companion star. As the binary rotates, we observe significant periodic variations in brightness (light curves) caused by the changing visibility of the heated hemisphere.
 
 ### Data Reduction & Methodology
-*   **Dataset:** An initial set of 148 frames was obtained. Following a quality assessment, 10 frames were identified as "bad frames" (due to tracking errors or atmospheric transients) and removed, leaving **138 calibrated frames** for analysis.
+*   **Dataset:** An initial set of 148 frames (each one with 100s of exposure time) was obtained. Following a quality assessment, 10 frames were identified as "bad frames" (due to tracking errors or atmospheric transients or satellite trails) and removed, leaving **138 calibrated frames** for analysis.
 *   **Detection Parameters:** PSR J2215+5135 is a relatively faint source. To maintain robust tracking and prevent the centroids from drifting into noise, the **Detection Stamp Size** was optimized to **50 pixels**.
 *   **Bulk Photometry:** Automated aperture photometry was performed across the entire time series to extract the instrumental magnitudes.
 
