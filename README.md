@@ -5,7 +5,7 @@
 </p>
 
 ## Key Features
-(Also a Help tab is available to guide users through the application.)
+Also a Help tab is available to guide users through the application.
 
 **INOOR** is a modern, Python application designed for astronomical FITS data reduction, aperture photometry, and astrometry. Built with a clean Model-View-Controller (MVC) architecture and a responsive PyQt5 graphical interface, INOOR provides a robust and user-friendly experience for astronomical research and data processing specifically for INO(Iranian National Observatory).
 
