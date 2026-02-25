@@ -1,0 +1,15 @@
+PyQt5==5.15.10
+astropy
+photutils==2.3.0
+astroalign==2.6.2
+ccdproc==2.5.1
+sep==1.4.1
+numpy
+scipy==1.15.1
+matplotlib==3.10.0
+pandas==2.3.3
+QDarkStyle
+requests
+astroquery==0.4.11
+opencv-python==4.10.0.84
+Nuitka==2.8.9

@@ -1,0 +1,13 @@
+__pycache__/
+*.pyc
+env/
+venv/
+*.egg-info/
+.DS_Store
+.idea/
+.vscode/
+*.zip
+*.tar.gz
+*.npy
+*.h5
+Output/
