@@ -3,7 +3,10 @@
 <p align="center">
   <img src="utils/resources/help/images/welcome_banner.webp" width="600" alt="INOOR Banner"/>
 </p>
-<small>INO Timelaps by Saeid Karimi</small
+<small>INO Timelaps by Saeid Karimi</small>
+
+
+
 
 **INOOR** is a modern, Python application designed for astronomical FITS data reduction, aperture photometry, and astrometry. Built with a clean Model-View-Controller (MVC) architecture and a responsive PyQt5 graphical interface, INOOR provides a robust and user-friendly experience for astronomical research and data processing specifically for INO(Iranian National Observatory).
 
