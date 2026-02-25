@@ -1,12 +1,16 @@
 # INOOR: Iranian National Observatory Optical Reduction Software
 
-<p align="center">
+<p style="text-align:center;">
   <img src="utils/resources/help/images/welcome_banner.webp" width="600" alt="INOOR Banner"/>
 </p>
-<small>INO Timelaps by Saeid Karimi</small>
 
+<!-- small centered caption a few pixels below the banner -->
+<p style="text-align:center; margin-top:8px; font-size:12px; line-height:1; color:#666; font-family:system-ui, Arial, sans-serif;">
+  <small>INO Timelaps by Saeid Karimi</small>
+</p>
 
-
+## Key Features
+(Also a Help tab is available to guide users through the application.)
 
 **INOOR** is a modern, Python application designed for astronomical FITS data reduction, aperture photometry, and astrometry. Built with a clean Model-View-Controller (MVC) architecture and a responsive PyQt5 graphical interface, INOOR provides a robust and user-friendly experience for astronomical research and data processing specifically for INO(Iranian National Observatory).
 
