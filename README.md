@@ -5,7 +5,7 @@
 </p>
 
 <!-- small centered caption a few pixels below the banner -->
-<p style="text-align:center; margin-top:8px; font-size:12px; line-height:1; color:#666; font-family:system-ui, Arial, sans-serif;">
+<p style="text-align:center; margin-top:8px; font-size:6px; line-height:1; color:#666; font-family:system-ui, Arial, sans-serif;">
   <small>INO Timelaps by Saeid Karimi</small>
 </p>
 
