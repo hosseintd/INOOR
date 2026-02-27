@@ -236,10 +236,9 @@ class HelpView(QtWidgets.QWidget):
         <p style='line-height:1.6;'>
         <b>Version:</b> V1.0.0 <br><br>
         <b>Developer:</b> <a href="https://github.com/hosseintd" style="color: #66ccff; text-decoration: none;">Hossein Torkzadeh</a><br>
+        <b>IUT Team Members:</b> Soroush Shakeri, Saeid Karimi and Parisa Hashemi<br>
         <b>Repository:</b> <a href="https://github.com/hosseintd/INOOR" style="color: #66ccff; text-decoration: none;">GitHub / INOOR</a><br><br>
-        <b>IUT Team Members:</b> Saeid Karimi and Parisa Hashemi<br>
-        <b>Supervisor:</b> Dr. Soroush Shakeri<br>
-        <b>Special Thanks To:</b> Hamed Altafi and Dr. Reza Rezaei, for their invaluable recommendations.<br><br>
+        We thank the INO340 technical and scientific staff supports and specially thanks to <b>Hamed Altafi</b> and <b>Reza Rezaei</b> for their invaluable insights and comments.<br><br>
         <b>Institution:</b> Isfahan University of Technology (IUT)<br>
         <b>Affiliation:</b> Iranian National Observatory (INO)
         </p>
