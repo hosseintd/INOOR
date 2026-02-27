@@ -89,7 +89,7 @@ For detailed case studies and scientific results obtained using INOOR, including
 ## Credits
 
 *   **Developer:** [Hossein Torkzadeh](https://github.com/hosseintd) and IUT Team
-*   **IUT Team Members:** Soroush Shakeri, Saeid Karimi, Parisa Hashemi
+*   **IUT Team Members:** Soroush Shakeri, Parisa Hashemi, Saeid Karimi 
 *   We thank the INO340 technical and scientific staff supports and specially thanks to Hamed Altafi and Reza Rezaei for their invaluable insights and comments.
 
 <p style="text-align:center; margin-top:8px; font-size:6px; line-height:1; color:#666; font-family:system-ui, Arial, sans-serif;">
