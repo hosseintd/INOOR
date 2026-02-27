@@ -61,3 +61,29 @@ For this observation night, we obtained a primary extinction coefficient in the 
 </p>
 
 *This measurement provides a clear baseline for the photometric conditions at the INO site during the observation run.*
+
+---
+
+## 3. GRB 251013C: Optical Follow-up with INO340
+
+Rapid optical follow-up of transient events like **GRB 251013C** is a critical capability of the **INO340 3.4m telescope**. These observations, reported in [GCN 42492](https://gcn.nasa.gov/circulars/42492), tracked the fading afterglow across multiple nights, highlighting the telescope's contribution to global transient science.
+
+<p align="center">
+  <img src="grb251013C13oct.jpeg" width="45%" alt="GRB 251013C (3.2h post-trigger)"/> 
+  <img src="grb251013C15oct.jpeg" width="45%" alt="GRB 251013C (46.6h post-trigger)"/>
+</p>
+
+### Citation
+```bibtex
+@ARTICLE{2025GCN.42492....1I,
+       author = {{INO340 Transient Follow-up Team} and {Khosroshahi}, H.~G. and {Shakeri}, S. and {Altafi}, H. and {Karimi Mianrudi}, S. and {Hashemi}, Parisa and {Torkzadeh}, H. and {Rezaei}, Reza and {Wang}, Yu},
+        title = "{GRB 251013C : 3.4-m telescope of Iranian National Observatory (INO340) optical observations}",
+      journal = {GRB Coordinates Network},
+         year = 2025,
+        month = oct,
+       volume = {42492},
+        pages = {1},
+       adsurl = {https://ui.adsabs.harvard.edu/abs/2025GCN.42492....1I},
+      adsnote = {Provided by the SAO/NASA Astrophysics Data System}
+}
+```

@@ -88,9 +88,8 @@ For detailed case studies and scientific results obtained using INOOR, including
 
 ## Credits
 
-*   **Developer:** [Hossein Torkzadeh](https://github.com/hosseintd)
-*   **Supervisor:** Dr. Soroush Shakeri
-*   **IUT Team Members:** Saeid Karimi, Parisa Hashemi
+*   **Developer:** [Hossein Torkzadeh](https://github.com/hosseintd) and IUT Team
+*   **IUT Team Members:** Soroush Shakeri, Saeid Karimi, Parisa Hashemi
 *   **Special Thanks:** Hamed Altafi, Dr. Reza Rezaei
 
 <p style="text-align:center; margin-top:8px; font-size:6px; line-height:1; color:#666; font-family:system-ui, Arial, sans-serif;">
