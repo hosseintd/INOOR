@@ -235,11 +235,10 @@ class HelpView(QtWidgets.QWidget):
         credits_html = """
         <p style='line-height:1.6;'>
         <b>Version:</b> V1.0.0 <br><br>
-        <b>Developer:</b> <a href="https://github.com/hosseintd" style="color: #66ccff; text-decoration: none;">Hossein Torkzadeh</a><br>
-        <b>IUT Team Members:</b> Soroush Shakeri, Saeid Karimi and Parisa Hashemi<br>
+        <b>Developer:</b> <a href="https://github.com/hosseintd" style="color: #66ccff; text-decoration: none;">Hossein Torkzadeh (IUT)</a> and IUT-INO Team<br>
+        <b>IUT Team Members:</b> H. G. Khosroshahi (INO), S. Shakeri (IUT/INO), Parisa Hashemi (IUT), S. Karimi Mianrudi (IUT), H. Altafi (INO/IUT), R. Rezaei (SUT/INO)<br>
         <b>Repository:</b> <a href="https://github.com/hosseintd/INOOR" style="color: #66ccff; text-decoration: none;">GitHub / INOOR</a><br><br>
-        We thank the INO340 technical and scientific staff supports and specially thanks to <b>Hamed Altafi</b> and <b>Reza Rezaei</b> for their invaluable insights and comments.<br><br>
-        <b>Institution:</b> Isfahan University of Technology (IUT)<br>
+        We thank the INO340 technical and scientific staff, M. Bidar, A. Javadi, A. Farhang, H. Shalchian, R. Shomali, R. Ravanmehr, H. Jenab, S. M. Mohajer, H. Sadeghi, M. Rostamian, A. Behnam, A. Karimzadeh, T. Shokatpour, R. Mirzaei, H. Alirezaei, S. Masoudieh, A. Danesh<br><br>
         <b>Affiliation:</b> Iranian National Observatory (INO)
         </p>
         """
