@@ -24,7 +24,7 @@ A workflow to apply master calibration frames to your science images in batch.
 A data analysis module designed for extracting instrumental and apparent magnitudes across time-series datasets.
 - **High-Accuracy Detection:** Star localization and aperture tracking across sequential frames.
 - **Live Parameter Tuning:** Instant feedback and updates within the UI when adjusting aperture sizes, FWHM, or sky background annuli.
-- **Zero-Point & Extinction:** Calculate atmospheric extinction coefficients and cross-reference with known catalog stars to determine true absolute magnitudes.
+- **Zero-Point & Extinction:** Calculate atmospheric extinction coefficients and cross-reference with known catalog stars to determine true apparent magnitudes.
 - **Interactive Light Curves:** Generate, visualize, and export interactive light curves directly within the application.
 
 ### 4. Astrometry & Plate Solving
