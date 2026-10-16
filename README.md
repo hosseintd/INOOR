@@ -88,9 +88,9 @@ For detailed case studies and scientific results obtained using INOOR, including
 
 ## Credits
 
-*   **Developer:** [Hossein Torkzadeh (IUT)](https://github.com/hosseintd) and IUT-INO Team
-*   **IUT-INO Team Members:** H. G. Khosroshahi (INO), S. Shakeri (IUT/INO), Parisa Hashemi (IUT),  S. Karimi Mianrudi (IUT), H. Altafi (INO/IUT), R. Rezaei (SUT/INO)
-*   We thank the INO340 technical and scientific staff, M. Bidar, A. Javadi, A. Farhang, H. Shalchian, R. Shomali, R. Ravanmehr, H. Jenab, S. M. Mohajer, H. Sadeghi, M. Rostamian, A. Behnam, A. Karimzadeh, T. Shokatpour, R. Mirzaei, H. Alirezaei, S. Masoudieh, A. Danesh
+*   **Developer:** [Hossein Torkzadeh (IUT)](https://github.com/hosseintd) and Soroush Shakeri(Advisor)
+*   **IUT-INO Team Members:** Specially thanks to Parisa Hashemi (IUT),  Saeid Karimi Mianrudi (IUT), Hamed Altafi (INO/IUT) and Reza Rezaei (SUT/INO) for their valuable comments.
+*   We also Thank the INO340 Scientific and Technical staff.
 
 <p style="text-align:center; margin-top:8px; font-size:6px; line-height:1; color:#666; font-family:system-ui, Arial, sans-serif;">
   <small>INO Timelaps by Saeid Karimi</small>
