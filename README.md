@@ -1,5 +1,7 @@
 # INOOR: Iranian National Observatory Optical Reduction
 
+[![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.23879448.svg)](https://doi.org/10.5281/zenodo.23879448)
+
 <p align="center">
   <img src="utils/resources/help/images/welcome_banner.webp" width="600" alt="The INO340 telescope"/>
 </p>
