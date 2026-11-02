@@ -6,7 +6,9 @@
   <img src="utils/resources/help/images/welcome_banner.webp" width="600" alt="The INO340 telescope"/>
 </p>
 
-INOOR is a GUI-based application for reducing images from the 3.4 m telescope of the Iranian National Observatory (INO340) without writing code. It takes raw frames to calibrated, cleaned frames, then makes scientific measurements on them, such as astrometry, aperture photometry, light curves and extinction coefficients, and looks up sources in the Pan-STARRS1 catalog for comparison. The methods behind its main choices, and their tests on INO340 data, are described in the INOOR paper.
+INOOR is a Python-based pipeline with a graphical user interface (GUI) designed for the data reduction and analysis of imaging observations obtained with the 3.4-meter telescope of the Iranian National Observatory (INO340). INOOR builds master calibration frames, calibrates and cleans the science frames, solves the astrometry, and performs aperture photometry on single frames and long time series, producing light curves and atmospheric extinction coefficients. Designed for transient follow-up, when complete calibration sets are often unavailable, it can construct an auto-flat directly from the science frames and removes cosmic rays and hot pixels in post-processing. Apertures can be set by FWHM scaling, signal-to-noise optimization, or the curve of growth, adapting to varying seeing or defocused images. INOOR is a step toward a more automated pipeline for the rapid follow-up of transients in the era of the Vera C. Rubin Observatory.
+
+The methods behind its main choices, and their tests on INO340 data, are described in the INOOR paper.
 
 ## What it does
 
