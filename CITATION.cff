@@ -4,6 +4,7 @@ type: software
 title: "INOOR: Iranian National Observatory Optical Reduction"
 version: 1.0.0
 date-released: 2026-11-02
+doi: 10.5281/zenodo.23879448
 license: GPL-3.0-only
 repository-code: "https://github.com/hosseintd/INOOR"
 abstract: >-

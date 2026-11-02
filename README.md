@@ -39,7 +39,7 @@ Work through the tabs from left to right. The Welcome / Guide tab explains each 
 
 ## Citation
 
-If you use INOOR in your work, please cite it. The reference for the code is in `CITATION.cff`; the reference for the paper will be added to the repository when the paper is published.
+If you use INOOR in your work, please cite it. The reference for the code is in `CITATION.cff` (DOI of version 1.0.0: [10.5281/zenodo.23879448](https://doi.org/10.5281/zenodo.23879448)); the reference for the paper will be added to the repository when the paper is published.
 
 ## Credits
 
