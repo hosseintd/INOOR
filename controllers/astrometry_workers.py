@@ -5,12 +5,31 @@ from core.astrometry.catalog_query import ps1cone
 from astropy.io import ascii
 import os
 import csv
+import math
 import time
+
+import numpy as np
+import requests
+
+
+def _angular_sep_deg(ra1, dec1, ra2, dec2):
+    """Angular separation in degrees (small-angle, cos(dec)-corrected).
+
+    A plain planar sqrt(dRA^2 + dDec^2) overweights the RA difference by
+    1/cos(dec) -- increasingly wrong at high declination.
+    """
+    dra = (float(ra1) - float(ra2) + 180.0) % 360.0 - 180.0  # wrap to [-180, 180]
+    ddec = float(dec1) - float(dec2)
+    cosd = math.cos(math.radians(0.5 * (float(dec1) + float(dec2))))
+    return math.hypot(dra * cosd, ddec)
 
 class PlateSolveWorker(QThread):
     finished = pyqtSignal(dict)
     error = pyqtSignal(str)
-    
+    # Set by the controller's Cancel. Qt's interruption flag cannot carry this: it is
+    # reset when the thread ends, before the queued result reaches the main thread.
+    cancelled = False
+
     def __init__(self, fits_path, params):
         super().__init__()
         self.fits_path = fits_path
@@ -52,8 +71,20 @@ class CatalogQueryWorker(QThread):
             columns = ["objID","raMean","decMean","nDetections",
                       "uMeanPSFMag","gMeanPSFMag","rMeanPSFMag","iMeanPSFMag","zMeanPSFMag","yMeanPSFMag"]
             res = ps1cone(self.ra, self.dec, radius_deg, table='mean', release='dr2', format='csv', columns=columns)
-            # res is astropy Table (returned by our migrated catalog_query.py)
+            # res is astropy Table (returned by our migrated catalog_query.py).
+            # Sort by true angular separation to the queried position so the
+            # consumer's `table[0]` is the NEAREST source, not an arbitrary
+            # catalog row (in crowded fields the first row could be a
+            # different star than the one clicked).
+            if len(res) > 1:
+                seps = np.array([_angular_sep_deg(row['raMean'], row['decMean'], self.ra, self.dec)
+                                 for row in res])
+                res = res[np.argsort(seps)]
             self.finished.emit(res)
+        except (requests.exceptions.ConnectionError, requests.exceptions.Timeout) as e:
+            # The raw text ("HTTPSConnectionPool(...): Max retries exceeded ...") hid the cause.
+            self.error.emit(f'Could not reach the PS1 catalog at MAST. Check the internet '
+                            f'connection. ({type(e).__name__})')
         except Exception as e:
             self.error.emit(str(e))
 
@@ -67,6 +98,9 @@ class BatchExportWorker(QThread):
         self.stars = stars
         self.out_path = out_path
         self.radius = radius_arcsec
+        # One entry per star whose PS1 query raised. A bare except used to swallow these,
+        # so with no network the file came out with every magnitude empty, as a success.
+        self.failed_queries = []
 
     def run(self):
         try:
@@ -79,7 +113,10 @@ class BatchExportWorker(QThread):
             for i, s in enumerate(self.stars):
                 # Check if thread has been requested to stop
                 if self.isInterruptionRequested():
-                    print("CSV export cancelled by user")
+                    # Emit finished even when cancelled: returning silently left
+                    # the caller's progress dialog on screen forever, because
+                    # on_export_finished is what closes it.
+                    self.finished.emit("")
                     return
                 
                 ra = s.get('ra_deg')
@@ -90,31 +127,30 @@ class BatchExportWorker(QThread):
                     try:
                         res = ps1cone(ra, dec, self.radius / 3600.0, columns=columns)
                         if len(res) > 0:
-                            # Simple closest match
+                            # Closest match by true angular separation
                             best_row = None; best_sep = 1e9
                             for row in res:
-                                sep = ((float(row['raMean'])-ra)**2 + (float(row['decMean'])-dec)**2)**0.5
+                                sep = _angular_sep_deg(row['raMean'], row['decMean'], ra, dec)
                                 if sep < best_sep:
                                     best_sep = sep; best_row = row
                             ps1_row = best_row
-                    except: pass
+                    except Exception as e:
+                        self.failed_queries.append(f'{type(e).__name__}: {e}')
                 
                 
-                row_dict = {
-                    'x': s['x'], 'y': s['y'], 'ra_deg': ra, 'dec_deg': dec,
-                    'u': ps1_row['uMeanPSFMag'] if ps1_row and 'uMeanPSFMag' in ps1_row.colnames else '',
-                    'g': ps1_row['gMeanPSFMag'] if ps1_row and 'gMeanPSFMag' in ps1_row.colnames else '',
-                    'r': ps1_row['rMeanPSFMag'] if ps1_row and 'rMeanPSFMag' in ps1_row.colnames else '',
-                    'i': ps1_row['iMeanPSFMag'] if ps1_row and 'iMeanPSFMag' in ps1_row.colnames else '',
-                    'z': ps1_row['zMeanPSFMag'] if ps1_row and 'zMeanPSFMag' in ps1_row.colnames else '',
-                    'y': ps1_row['yMeanPSFMag'] if ps1_row and 'yMeanPSFMag' in ps1_row.colnames else '',
-                }
+                # The band columns carry a _ps1 suffix: a plain 'y' key for the PS1 y band
+                # overwrote the pixel y, so every export had the y magnitude under 'y'.
+                # PS1 has no u band (that column was always empty).
+                row_dict = {'x': s['x'], 'y': s['y'], 'ra_deg': ra, 'dec_deg': dec}
+                for band in 'grizy':
+                    col = f'{band}MeanPSFMag'
+                    row_dict[f'{band}_ps1'] = ps1_row[col] if ps1_row and col in ps1_row.colnames else ''
                 rows_out.append(row_dict)
                 self.progress.emit(i+1, total)
 
             # Check again before writing file
             if self.isInterruptionRequested():
-                print("CSV export cancelled by user")
+                self.finished.emit("")
                 return
 
             with open(self.out_path, 'w', newline='') as f:

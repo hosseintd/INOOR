@@ -1,6 +1,5 @@
 PyQt5==5.15.10
 requests==2.32.5
-astroquery==0.4.11
 numpy==1.26.4
 scipy==1.15.1
 matplotlib==3.10.0
@@ -9,3 +8,5 @@ astropy==7.0.0
 photutils==2.3.0
 astroalign==2.6.2
 sep==1.4.1
+scikit-image==0.25.0
+psutil==7.1.3

@@ -1,5 +1,6 @@
 # core/astrometry/astrometry_solver.py
 import os
+import re
 import sys
 import time
 import json
@@ -8,13 +9,43 @@ import numpy as np
 from astropy.io import fits
 from astropy.coordinates import SkyCoord
 
-try:
-    from astroquery.astrometry_net import AstrometryNet
-except Exception as e:
-    print(f"Warning: Astroquery import failed, falling back to requests. Error: {e}")
-    AstrometryNet = None
-
 import requests
+
+# Keywords of a plate solution that are copied onto the original image (structural ones such as
+# NAXIS/BITPIX stay the image's own).
+_WCS_KEYWORDS = (
+    'RADESYS', 'EQUINOX', 'WCSAXES', 'LONPOLE', 'LATPOLE',
+    'CRPIX1', 'CRPIX2', 'CRVAL1', 'CRVAL2',
+    'CTYPE1', 'CTYPE2', 'CUNIT1', 'CUNIT2',
+    'CD1_1', 'CD1_2', 'CD2_1', 'CD2_2',
+    'CDELT1', 'CDELT2', 'CROTA1', 'CROTA2',
+    'PV1_1', 'PV1_2', 'PV1_3', 'PV1_4', 'PV1_5',
+    'PV2_1', 'PV2_2', 'PV2_3', 'PV2_4', 'PV2_5',
+)
+# SIP distortion polynomial: forward (A, B) and inverse (AP, BP). It must travel with
+# CTYPE '...-TAN-SIP'. Dropping it (28 keywords on PSR J2215 frame _High_86_, 0.0484"/px)
+# moved positions by 0.062" rms and 0.22" (4.6 px) at the frame edge.
+_SIP_ORDER_KEY = re.compile(r'^(A|B|AP|BP)_ORDER$')
+_SIP_TERM_KEY = re.compile(r'^(A|B|AP|BP)_(\d+)_(\d+)$')
+
+
+def _is_sip_keyword(key):
+    return bool(_SIP_ORDER_KEY.match(key) or _SIP_TERM_KEY.match(key))
+
+
+def _copy_wcs_keywords(src_hdr, dst_hdr):
+    """Copy the plate solution in src_hdr onto dst_hdr in place; other keywords stay untouched.
+    SIP keywords already in dst_hdr (an older solve) are removed first, so a new solution of
+    lower order, or one without SIP, cannot inherit stale terms."""
+    for key in [k for k in dst_hdr.keys() if _is_sip_keyword(k)]:
+        del dst_hdr[key]
+    for key in _WCS_KEYWORDS:
+        if key in src_hdr:
+            dst_hdr[key] = (src_hdr[key], src_hdr.comments[key])
+    for key in src_hdr.keys():
+        if _is_sip_keyword(key):
+            dst_hdr[key] = (src_hdr[key], src_hdr.comments[key])
+
 
 def _rebin_block_average(data, factor):
     if factor == 1:
@@ -27,6 +58,24 @@ def _rebin_block_average(data, factor):
     rebinned = reshaped.mean(axis=(1, 3))
     return rebinned
 
+def _scale_sip_terms(hdr, s):
+    """Rescale the SIP polynomial in place for pixels s times larger in count (s = f going to
+    full resolution, 1/f going down). SIP terms are pixel offsets polynomial in pixel offsets
+    from CRPIX, so s * A_pq * (u/s)^p * (v/s)^q gives A_pq -> A_pq * s**(1-p-q); the inverse
+    (AP, BP) maps pixels to pixels and scales alike."""
+    for key in list(hdr.keys()):
+        m = _SIP_TERM_KEY.match(key)
+        if m:
+            p, q = int(m.group(2)), int(m.group(3))
+            hdr[key] = float(hdr[key]) * s ** (1 - p - q)
+
+
+# Pixel mapping of _rebin_block_average (crop from pixel 1, mean of f x f blocks): down pixel p
+# (1-based FITS) is the mean of full pixels f*(p-1)+1 ... f*p, so its centre is at full-res
+#     X = f*p - (f-1)/2,        inversely  p = (X + (f-1)/2) / f.
+# The old f*(p-1)+1 put every position (f-1)/2 full px off (0.5 px at f = 2, 1.5 px at f = 4),
+# measured with block-averaged synthetic stars in both directions.
+
 def _make_downsampled_header(orig_header, factor, new_nx, new_ny):
     hdr = orig_header.copy()
     hdr['NAXIS1'] = new_nx
@@ -34,11 +83,7 @@ def _make_downsampled_header(orig_header, factor, new_nx, new_ny):
     for pix in (1, 2):
         key = f'CRPIX{pix}'
         if key in hdr:
-            try:
-                orig_crpix = float(hdr[key])
-                hdr[key] = (orig_crpix - 1.0) / float(factor) + 1.0
-            except Exception:
-                pass
+            hdr[key] = (float(hdr[key]) + (factor - 1) / 2.0) / factor
     if any(k in hdr for k in ('CD1_1', 'CD1_2', 'CD2_1', 'CD2_2')):
         for k in ('CD1_1', 'CD1_2', 'CD2_1', 'CD2_2'):
             if k in hdr:
@@ -53,6 +98,7 @@ def _make_downsampled_header(orig_header, factor, new_nx, new_ny):
                     hdr[k] = float(hdr[k]) * float(factor)
                 except Exception:
                     pass
+    _scale_sip_terms(hdr, 1.0 / factor)
     return hdr
 
 def _scale_solved_header_to_fullres(solved_hdr, factor, orig_nx, orig_ny):
@@ -62,11 +108,7 @@ def _scale_solved_header_to_fullres(solved_hdr, factor, orig_nx, orig_ny):
     for pix in (1, 2):
         key = f'CRPIX{pix}'
         if key in new_hdr:
-            try:
-                crpix_down = float(new_hdr[key])
-                new_hdr[key] = float(factor) * (crpix_down - 1.0) + 1.0
-            except Exception:
-                pass
+            new_hdr[key] = factor * float(new_hdr[key]) - (factor - 1) / 2.0
     if any(k in new_hdr for k in ('CD1_1', 'CD1_2', 'CD2_1', 'CD2_2')):
         for k in ('CD1_1', 'CD1_2', 'CD2_1', 'CD2_2'):
             if k in new_hdr:
@@ -81,6 +123,7 @@ def _scale_solved_header_to_fullres(solved_hdr, factor, orig_nx, orig_ny):
                     new_hdr[k] = float(new_hdr[k]) / float(factor)
                 except Exception:
                     pass
+    _scale_sip_terms(new_hdr, float(factor))
     return new_hdr
 
 class AstrometrySolver:
@@ -91,11 +134,6 @@ class AstrometrySolver:
         self.api_key = api_key or os.environ.get('ASTROMETRY_API_KEY', '')
         self.timeout = timeout
         self.poll_interval = poll_interval
-        if AstrometryNet:
-            self.client = AstrometryNet()
-            self.client.api_key = self.api_key
-        else:
-            self.client = None
 
     @staticmethod
     def _get_output_base():
@@ -144,7 +182,11 @@ class AstrometrySolver:
             # Using current project's temp approach
             tmp_fd, tmp_path = tempfile.mkstemp(prefix='downsampled_', suffix='.fits')
             os.close(tmp_fd)
-            fits.PrimaryHDU(data=ds.astype(np.float32), header=hdr_down).writeto(tmp_path, overwrite=True)
+            try:
+                fits.PrimaryHDU(data=ds.astype(np.float32), header=hdr_down).writeto(tmp_path, overwrite=True)
+            except Exception:
+                os.unlink(tmp_path)
+                raise
             return tmp_path, (ny, nx)
 
     def _get_job_for_submission(self, submission_id, timeout=30):
@@ -234,31 +276,15 @@ class AstrometrySolver:
                     print('No image data found in original FITS')
                     return False
             
-            # Extract WCS keywords from wcs.fits (skip structural keywords)
-            wcs_keywords = [
-                'RADESYS', 'EQUINOX', 'WCSAXES',
-                'CRPIX1', 'CRPIX2', 'CRVAL1', 'CRVAL2',
-                'CTYPE1', 'CTYPE2', 'CUNIT1', 'CUNIT2',
-                'CD1_1', 'CD1_2', 'CD2_1', 'CD2_2',
-                'CDELT1', 'CDELT2', 'CROTA1', 'CROTA2',
-                'PV1_1', 'PV1_2', 'PV1_3', 'PV1_4', 'PV1_5',
-                'PV2_1', 'PV2_2', 'PV2_3', 'PV2_4', 'PV2_5'
-            ]
-            
             with fits.open(wcs_fits_path, ignore_missing_end=True, ignore_missing_simple=True) as wcs_hdul:
                 wcs_header = wcs_hdul[0].header
-                
+
                 # Create new HDU with original data
                 new_hdu = fits.PrimaryHDU(data=orig_data, header=orig_header)
-                
-                # Copy only WCS-related keywords to avoid header conflicts
-                for keyword in wcs_keywords:
-                    if keyword in wcs_header:
-                        try:
-                            new_hdu.header[keyword] = wcs_header[keyword]
-                        except Exception as e:
-                            print(f'Could not set {keyword}: {e}')
-                
+
+                # Copy only WCS-related keywords (SIP included) to avoid header conflicts
+                _copy_wcs_keywords(wcs_header, new_hdu.header)
+
                 new_hdu.writeto(output_path, overwrite=True)
                 return True
         except Exception as e:
@@ -267,27 +293,24 @@ class AstrometrySolver:
 
     def solve_from_file(self, fits_path, scale_lower_arcmin=2.0, scale_upper_arcmin=10.0, solve_timeout=None, downsample_factor: int = 1, ra=None, dec=None, search_radius=None):
         solve_timeout = solve_timeout or self.timeout
-        settings = {
-            'scale_units': 'arcminwidth',
-            'scale_type' : 'ul',
-            'scale_lower': float(scale_lower_arcmin),
-            'scale_upper': float(scale_upper_arcmin)
-        }
-        
-        # Add RA/Dec hint if provided to help solver
+
         if ra is not None and dec is not None:
-            # Use correct astrometry.net API parameter names for position limits
-            settings['center_ra'] = float(ra)
-            settings['center_dec'] = float(dec)
             if search_radius is not None:
-                # Convert search_radius from arcminutes to degrees
                 radius_deg = float(search_radius) / 60.0
-                settings['radius'] = radius_deg
                 print(f'Plate solving with RA/Dec hint: ({ra:.4f}, {dec:.4f}) radius: {search_radius} arcmin ({radius_deg:.2f}°)')
             else:
                 print(f'Plate solving with RA/Dec hint: ({ra:.4f}, {dec:.4f})')
         else:
             print('Plate solving without RA/Dec hint')
+
+        # The image itself is uploaded and astrometry.net finds the stars. astroquery's
+        # solve_from_image used to be tried first wherever it imported: with photutils installed
+        # it detects stars locally (DAOStarFinder, fwhm=3, which splits saturated INO340 stars
+        # into several sources) and sends only that list, and its status polling gives up on a
+        # dropped connection (seen behind a local proxy). PSR High_86, f=4: 106 vs 42 mas rms
+        # against Gaia, 435 s vs 35-78 s.
+        if not self.api_key:
+            raise RuntimeError('No astrometry.net API key given.')
 
         ds_path = None
         orig_dims = None
@@ -298,121 +321,6 @@ class AstrometrySolver:
         else:
             submit_path = fits_path
 
-        if self.client:
-            try:
-                print('Submitting to astrometry.net (astroquery)...')
-                wcs_header_or_tuple = self.client.solve_from_image(submit_path,
-                                                                  solve_timeout=solve_timeout,
-                                                                  verbose=False,
-                                                                  return_submission_id=True,
-                                                                  **settings)
-                if not wcs_header_or_tuple:
-                    raise RuntimeError('astroquery returned no result')
-                wcs_header, submission_id = wcs_header_or_tuple
-                
-                job_id = self._get_job_for_submission(submission_id, timeout=30)
-                
-                # Check if the job actually succeeded
-                if job_id is not None:
-                    job_status = self._wait_for_job_result(job_id, timeout=solve_timeout)
-                    if job_status == 'failure':
-                        return {'solved_fits': None, 'submission_id': submission_id, 'job_id': job_id,
-                                'error': f'Astrometry.net job {job_id} failed to solve the image. '
-                                         f'The field may have too few stars or the scale hint may be wrong.'
-                                         f"Try to decrease Downsample Factor or increase the Scale Upper parameter."}
-                    elif job_status is None:
-                        return {'solved_fits': None, 'submission_id': submission_id, 'job_id': job_id,
-                                'error': f'Timed out waiting for job {job_id} to complete.'}
-                
-                job_folder = self._ensure_job_folder(job_id, submission_id)
-                
-                # Download WCS file and save it
-                wcs_fits_path = os.path.join(job_folder, f'wcs_{job_id}.fits')
-                wcs_url = f'http://nova.astrometry.net/wcs_file/{job_id}'
-                try:
-                    r_wcs = requests.get(wcs_url, timeout=30)
-                    r_wcs.raise_for_status()
-                    
-                    # Validate content is FITS, not HTML error
-                    if not self._is_valid_fits_content(r_wcs.content):
-                        if r_wcs.content.startswith(b'<!DOCTYPE') or r_wcs.content.startswith(b'<html'):
-                            print(f'WCS file download returned HTML (human verification needed)')
-                            return {'solved_fits': None, 'submission_id': submission_id, 'job_id': job_id,
-                                    'error': 'Astrometry.net requires human verification for this solve. WCS file unavailable.'}
-                        print(f'WCS file does not appear to be valid FITS')
-                        return {'solved_fits': None, 'submission_id': submission_id, 'job_id': job_id,
-                                'error': 'Failed to download valid WCS file from Astrometry.net'}
-                    
-                    with open(wcs_fits_path, 'wb') as fh:
-                        fh.write(r_wcs.content)
-                except Exception as e:
-                    print(f'Failed to download WCS file: {e}')
-                    return {'solved_fits': None, 'submission_id': submission_id, 'job_id': job_id,
-                            'error': f'Failed to download WCS file: {e}'}
-                
-                rdls_path, axy_path = None, None
-                if job_id is not None:
-                    rdls_path = self._download_result_file(job_id, 'rdls_file', os.path.join(job_folder, f'rdls_{job_id}.fits'))
-                    axy_path  = self._download_result_file(job_id, 'axy_file',  os.path.join(job_folder, f'axy_{job_id}.fits'))
-                
-                # Apply WCS to original image
-                final_solved = None
-                if ds_path and orig_dims is not None:
-                    # Scale WCS header to full resolution and apply to original image
-                    with fits.open(wcs_fits_path, ignore_missing_end=True, ignore_missing_simple=True) as wcs_hdul:
-                        wcs_header = wcs_hdul[0].header
-                    ny_orig, nx_orig = orig_dims
-                    
-                    with fits.open(fits_path, ignore_missing_end=True, ignore_missing_simple=True) as orig_hdul:
-                        orig_data = orig_hdul[0].data
-                        orig_header = orig_hdul[0].header.copy()
-                        if orig_data is None:
-                            for h in orig_hdul:
-                                if getattr(h, 'data', None) is not None:
-                                    orig_data = h.data
-                                    orig_header = h.header.copy()
-                                    break
-                        
-                        # Create new HDU with original data
-                        new_hdu = fits.PrimaryHDU(data=orig_data, header=orig_header)
-                        
-                        # Copy WCS keywords from the scaled header, avoid structural conflicts
-                        wcs_keywords = [
-                            'RADESYS', 'EQUINOX', 'WCSAXES',
-                            'CRPIX1', 'CRPIX2', 'CRVAL1', 'CRVAL2',
-                            'CTYPE1', 'CTYPE2', 'CUNIT1', 'CUNIT2',
-                            'CD1_1', 'CD1_2', 'CD2_1', 'CD2_2',
-                            'CDELT1', 'CDELT2', 'CROTA1', 'CROTA2',
-                            'PV1_1', 'PV1_2', 'PV1_3', 'PV1_4', 'PV1_5',
-                            'PV2_1', 'PV2_2', 'PV2_3', 'PV2_4', 'PV2_5'
-                        ]
-                        
-                        # Scale WCS to full resolution
-                        hdr_full = _scale_solved_header_to_fullres(wcs_header, factor, nx_orig, ny_orig)
-                        
-                        # Copy only WCS keywords to avoid conflicts
-                        for keyword in wcs_keywords:
-                            if keyword in hdr_full:
-                                try:
-                                    new_hdu.header[keyword] = hdr_full[keyword]
-                                except Exception as e:
-                                    print(f'Could not set {keyword}: {e}')
-                        
-                        final_solved = os.path.join(job_folder, f"solved_fullres_{os.path.basename(fits_path)}")
-                        new_hdu.writeto(final_solved, overwrite=True)
-                else:
-                    # No downsampling, apply WCS directly to original
-                    final_solved = os.path.join(job_folder, f"solved_{os.path.basename(fits_path)}")
-                    self._apply_wcs_to_image(fits_path, wcs_fits_path, final_solved)
-                
-                return {'solved_fits': final_solved, 'submission_id': submission_id, 'job_id': job_id, 'rdls_path': rdls_path, 'axy_path': axy_path, 'downsample_factor': factor}
-            except Exception as e:
-                print('astroquery solve path failed:', e)
-
-        # Fallback to direct requests
-        if not self.api_key:
-            raise RuntimeError('No ASTROMETRY_API_KEY available for direct upload fallback.')
-        
         try:
             login_url = 'http://nova.astrometry.net/api/login'
             # Use data=... not json=... specifically for some versions, but here we keep existing
@@ -421,21 +329,22 @@ class AstrometrySolver:
             resp = r.json()
             session = resp.get('session')
             if not session:
-                raise RuntimeError('Login failed: no session returned')
+                # A wrong key is answered with {"status": "error", "errormessage": "bad apikey"}.
+                raise RuntimeError(f"Login to astrometry.net failed "
+                                   f"({resp.get('errormessage', 'no session returned')}). "
+                                   f"Check the API key.")
 
             upload_url = 'http://nova.astrometry.net/api/upload'
             request_json = {'session': session, 'publicly_visible': 'n',
                         'scale_units': 'arcminwidth', 'scale_type': 'ul',
                         'scale_lower': float(scale_lower_arcmin), 'scale_upper': float(scale_upper_arcmin)}
             
-            # Add RA/Dec hint if provided (matching astroquery path)
+            # Add RA/Dec hint if provided
             if ra is not None and dec is not None:
                 request_json['center_ra'] = float(ra)
                 request_json['center_dec'] = float(dec)
                 if search_radius is not None:
-                    radius_deg = float(search_radius) / 60.0
-                    request_json['radius'] = radius_deg
-                    print(f'Fallback requests: Adding RA/Dec hint: ({ra:.4f}, {dec:.4f}) radius: {search_radius} arcmin ({radius_deg:.2f}°)')
+                    request_json['radius'] = float(search_radius) / 60.0
             
             with open(submit_path, 'rb') as fh:
                 files = {'file': (os.path.basename(submit_path), fh)}
@@ -459,7 +368,7 @@ class AstrometrySolver:
                 if job_status == 'failure':
                     return {'solved_fits': None, 'submission_id': submission_id, 'job_id': job_id,
                             'error': f'Astrometry.net job {job_id} failed to solve the image. '
-                                     f'The field may have too few stars or the scale hint may be wrong.'
+                                     f'The field may have too few stars or the scale hint may be wrong. '
                                      f"Try to decrease Downsample Factor or increase the Scale Upper parameter."}
                 elif job_status is None:
                     return {'solved_fits': None, 'submission_id': submission_id, 'job_id': job_id,
@@ -506,29 +415,13 @@ class AstrometrySolver:
                                 
                                 # Create new HDU with original data
                                 new_hdu = fits.PrimaryHDU(data=orig_data, header=orig_header)
-                                
-                                # Copy WCS keywords from the scaled header, avoid structural conflicts
-                                wcs_keywords = [
-                                    'RADESYS', 'EQUINOX', 'WCSAXES',
-                                    'CRPIX1', 'CRPIX2', 'CRVAL1', 'CRVAL2',
-                                    'CTYPE1', 'CTYPE2', 'CUNIT1', 'CUNIT2',
-                                    'CD1_1', 'CD1_2', 'CD2_1', 'CD2_2',
-                                    'CDELT1', 'CDELT2', 'CROTA1', 'CROTA2',
-                                    'PV1_1', 'PV1_2', 'PV1_3', 'PV1_4', 'PV1_5',
-                                    'PV2_1', 'PV2_2', 'PV2_3', 'PV2_4', 'PV2_5'
-                                ]
-                                
+
                                 # Scale WCS to full resolution
                                 hdr_full = _scale_solved_header_to_fullres(wcs_header, factor, nx_orig, ny_orig)
-                                
-                                # Copy only WCS keywords to avoid conflicts
-                                for keyword in wcs_keywords:
-                                    if keyword in hdr_full:
-                                        try:
-                                            new_hdu.header[keyword] = hdr_full[keyword]
-                                        except Exception as e:
-                                            print(f'Could not set {keyword}: {e}')
-                                
+
+                                # Copy only WCS keywords (SIP included) to avoid structural conflicts
+                                _copy_wcs_keywords(hdr_full, new_hdu.header)
+
                                 final_solved = os.path.join(job_folder, f"solved_fullres_{os.path.basename(fits_path)}")
                                 new_hdu.writeto(final_solved, overwrite=True)
                                 solved_fits = final_solved
@@ -545,14 +438,21 @@ class AstrometrySolver:
             else:
                  last_error = "Timed out waiting for job_id or submission failed."
 
-            try:
-                if ds_path and os.path.exists(ds_path):
-                    os.unlink(ds_path)
-            except Exception:
-                pass
-
-            return {'solved_fits': solved_fits, 'submission_id': submission_id, 'job_id': job_id, 
+            return {'solved_fits': solved_fits, 'submission_id': submission_id, 'job_id': job_id,
                     'rdls_path': rdls_path, 'axy_path': axy_path, 'downsample_factor': factor, 'error': last_error}
 
+        except (requests.exceptions.ConnectionError, requests.exceptions.Timeout) as net_e:
+            # The raw text ("HTTPConnectionPool(...): Max retries exceeded ...") read as if
+            # the image had failed to solve.
+            return {'solved_fits': None,
+                    'error': f'Could not reach nova.astrometry.net. Check the internet '
+                             f'connection. ({type(net_e).__name__})'}
         except Exception as global_e:
              return {'solved_fits': None, 'error': str(global_e)}
+        finally:
+            # Every way out: a failed job, a timeout, no network, a wrong key.
+            if ds_path and os.path.exists(ds_path):
+                try:
+                    os.unlink(ds_path)
+                except OSError as e:
+                    print(f'Could not delete the temporary file {ds_path}: {e}')

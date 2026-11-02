@@ -22,6 +22,13 @@ class RangeSlider(QtWidgets.QWidget):
         return QtCore.QSize(300, 40)
 
     def paintEvent(self, event):
+        # Every colour here used to be a literal, so the widget kept its
+        # blue-on-dark look in all three themes -- and in night mode, whose
+        # whole point is a red-only low-luminance palette, it was effectively
+        # invisible. Colours now come from views.theme like everything else.
+        from views.theme import THEMES, DEFAULT_THEME, theme_manager, ui_font
+        t = THEMES.get(theme_manager.current(), THEMES[DEFAULT_THEME])
+
         p = QtGui.QPainter(self)
         p.setRenderHint(QtGui.QPainter.Antialiasing)
         w = self.width()
@@ -33,7 +40,7 @@ class RangeSlider(QtWidgets.QWidget):
         # background bar
         bar_y = h // 2
         p.setPen(QtCore.Qt.NoPen)
-        p.setBrush(QtGui.QBrush(QtGui.QColor(80, 120, 160)))  # subtle darker tone for visibility
+        p.setBrush(QtGui.QBrush(QtGui.QColor(t['border'])))
         rect = QtCore.QRectF(left, bar_y - self._bar_thickness/2, length, self._bar_thickness)
         p.drawRoundedRect(rect, 3, 3)
 
@@ -44,7 +51,7 @@ class RangeSlider(QtWidgets.QWidget):
         else:
             lower_x = left + (self._lower - self._min) / (self._max - self._min) * length
             upper_x = left + (self._upper - self._min) / (self._max - self._min) * length
-        p.setBrush(QtGui.QBrush(QtGui.QColor(100, 150, 250, 200)))
+        p.setBrush(QtGui.QBrush(QtGui.QColor(t['accent'])))
         sel_rect = QtCore.QRectF(lower_x, bar_y - self._bar_thickness/2, max(1.0, upper_x - lower_x), self._bar_thickness)
         p.drawRoundedRect(sel_rect, 3, 3)
 
@@ -56,15 +63,15 @@ class RangeSlider(QtWidgets.QWidget):
                 QtCore.QPointF(cx - r, cy + r),
                 QtCore.QPointF(cx + r, cy + r),
             ]
-            p.setBrush(QtGui.QBrush(QtGui.QColor(30, 30, 30)))
+            p.setBrush(QtGui.QBrush(QtGui.QColor(t['text'])))
             p.drawPolygon(QtGui.QPolygonF(points))
 
         draw_triangle(lower_x, bar_y - 2)
         draw_triangle(upper_x, bar_y - 2)
 
         # draw numeric labels
-        p.setPen(QtGui.QPen(QtGui.QColor(220, 220, 220)))
-        p.setFont(QtGui.QFont("Arial", 9))
+        p.setPen(QtGui.QPen(QtGui.QColor(t['text'])))
+        p.setFont(ui_font())
         p.drawText(5, 12, f"{self._min}")
         p.drawText(w - 60, 12, f"{self._max}")
         p.drawText(int(lower_x) - 14, bar_y + 22, f"{self._lower}")

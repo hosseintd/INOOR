@@ -6,6 +6,8 @@ class ZeropointCalibrationDialog(QtWidgets.QDialog):
     # Signals to request actions from Controller
     request_add_ref = QtCore.pyqtSignal()
     request_review = QtCore.pyqtSignal(int) # index of column to review
+    # (policy, parameter) -- re-measure every reference star under a new rule
+    request_repolicy = QtCore.pyqtSignal(str, float)
 
     def __init__(self, parent, files, calibration_history):
         """
@@ -29,17 +31,31 @@ class ZeropointCalibrationDialog(QtWidgets.QDialog):
         self.populate()
 
     def _setup_ui(self):
-        self.setStyleSheet("""
-            QDialog { background: #162a2a; color: #d9f0ec; }
-            QTableWidget { background: #101616; color: #d9f0ec; }
-            QHeaderView::section { background: #2e6f6f; color: #d9f0ec; }
-            QPushButton { background: #0f7a73; color: white; border-radius: 4px; padding: 6px; }
-            QLabel { color: #d9f0ec; font-weight: bold; }
-            QDoubleSpinBox { background: #0e1a1a; color: #d9f0ec; border: 1px solid #2e6f6f; }
-            QGroupBox { border: 1px solid #2e6f6f; margin-top: 10px; }
-        """)
+        # Styling comes from the application stylesheet (views/theme.py).
         layout = QtWidgets.QVBoxLayout(self)
         
+        # Aperture rule. A zeropoint is only transferable to another star if
+        # both were measured through the same radius, so the rule that produced
+        # these numbers belongs on this screen, not buried in Advanced Settings.
+        rule_row = QtWidgets.QHBoxLayout()
+        rule_row.addWidget(QtWidgets.QLabel("Aperture rule:"))
+        self.cmb_rule = QtWidgets.QComboBox()
+        self.cmb_rule.addItem("Max SNR (per star)", "snr")
+        self.cmb_rule.addItem("Curve of growth (per star)", "growth")
+        self.cmb_rule.addItem("Frame FWHM x factor", "frame_fwhm")
+        self.cmb_rule.setToolTip(
+            "Frame FWHM gives every star in a frame the same radius, which is\n"
+            "what makes a zeropoint measured on one star valid for another.")
+        self.spin_rule_param = QtWidgets.QDoubleSpinBox()
+        self.spin_rule_param.setRange(0.05, 20.0); self.spin_rule_param.setDecimals(2)
+        self.spin_rule_param.setSingleStep(0.05); self.spin_rule_param.setValue(1.0)
+        self.btn_apply_rule = QtWidgets.QPushButton("Re-measure with this rule")
+        rule_row.addWidget(self.cmb_rule)
+        rule_row.addWidget(self.spin_rule_param)
+        rule_row.addWidget(self.btn_apply_rule)
+        rule_row.addStretch()
+        layout.addLayout(rule_row)
+
         # Mags Panel
         self.mags_layout = QtWidgets.QHBoxLayout()
         layout.addLayout(self.mags_layout)
@@ -67,6 +83,11 @@ class ZeropointCalibrationDialog(QtWidgets.QDialog):
         btns.addWidget(self.btn_cancel)
         layout.addLayout(btns)
         
+        self.cmb_rule.currentIndexChanged.connect(self._sync_rule_param)
+        self.btn_apply_rule.clicked.connect(
+            lambda: self.request_repolicy.emit(self.cmb_rule.currentData() or 'snr',
+                                               float(self.spin_rule_param.value())))
+        self._sync_rule_param()
         self.btn_add_star.clicked.connect(self.request_add_ref.emit)
         self.btn_recac.clicked.connect(self.on_calculate)
         self.btn_review.clicked.connect(self.on_review_click)
@@ -77,6 +98,26 @@ class ZeropointCalibrationDialog(QtWidgets.QDialog):
         if not self.history:
             self.btn_apply.setEnabled(False)
             self.btn_recac.setEnabled(False)
+
+    def set_rule(self, policy, param):
+        """Show the rule the controller is actually using."""
+        i = self.cmb_rule.findData(policy)
+        if i >= 0:
+            self.cmb_rule.blockSignals(True)
+            self.cmb_rule.setCurrentIndex(i)
+            self.cmb_rule.blockSignals(False)
+        self._sync_rule_param()
+        self.spin_rule_param.setValue(float(param))
+
+    def _sync_rule_param(self):
+        pol = self.cmb_rule.currentData() or 'snr'
+        if pol == 'frame_fwhm':
+            self.spin_rule_param.setRange(0.3, 6.0); self.spin_rule_param.setSingleStep(0.1)
+            self.spin_rule_param.setPrefix("x ")
+        else:
+            self.spin_rule_param.setRange(0.50, 0.995); self.spin_rule_param.setSingleStep(0.01)
+            self.spin_rule_param.setPrefix("E ")
+        self.spin_rule_param.setVisible(pol != 'snr')
 
     def populate(self):
         import os
@@ -109,6 +150,11 @@ class ZeropointCalibrationDialog(QtWidgets.QDialog):
             
         self.mags_layout.addStretch()
             
+        # Cleared, not merged into. populate() only ever wrote into this dict,
+        # so removing a reference star left its zeropoint behind: the cell showed
+        # "N/A" while get_results() still handed the stale number to the model.
+        self.zeropoints = {}
+
         self.table.setRowCount(len(self.files))
         for r, path in enumerate(self.files):
             fname = os.path.basename(path)

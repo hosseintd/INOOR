@@ -4,6 +4,7 @@ import os
 from PyQt5 import QtWidgets, QtCore, QtGui
 from .components.astrometry.image_viewer import AstrometryFitsViewer
 from .components.astrometry.control_panel import AstrometryControlPanel
+from .theme import set_variant
 
 class AstrometryView(QtWidgets.QWidget):
     # Signals for Controller
@@ -34,7 +35,9 @@ class AstrometryView(QtWidgets.QWidget):
         self.right_layout.addWidget(self.control_panel)
 
         # Catalog/Info Group
-        self.grp_info = QtWidgets.QGroupBox("Source Info & Catalog")
+        # "&&" escapes the ampersand. With a single "&", Qt reads "&C" as a
+        # mnemonic and the title rendered as "Source Info  Catalog".
+        self.grp_info = QtWidgets.QGroupBox("Source Info && Catalog")
         self.info_layout = QtWidgets.QVBoxLayout(self.grp_info)
         
         self.info_box = QtWidgets.QTextEdit()
@@ -53,29 +56,19 @@ class AstrometryView(QtWidgets.QWidget):
         # Transient/Other (Future expansion)
         self.btn_open_fits = QtWidgets.QPushButton("Open New FITS Image")
         self.btn_open_fits.setMinimumHeight(35)
-        self.btn_open_fits.setStyleSheet("background-color: #0f7a73; font-weight: bold;")
+        set_variant(self.btn_open_fits, "primary")
         self.right_layout.addWidget(self.btn_open_fits)
 
         self.right_layout.addStretch()
-        
+
         layout.addWidget(self.right_container, stretch=1)
 
-        # Styling (Match dark teal theme with high-contrast elements)
-        self.setStyleSheet("""
-            QWidget { background: #162a2a; color: #e0fcf9; font-family: 'Segoe UI', Arial; font-size: 10pt; }
-            QGroupBox { border: 2px solid #2e6f6f; margin-top: 12px; font-weight: bold; border-radius: 5px; }
-            QGroupBox::title { subcontrol-origin: margin; left: 10px; padding: 0 5px 0 5px; color: #3df2e5; }
-            QPushButton { background: #0f7a73; border: 1px solid #2e6f6f; border-radius: 4px; padding: 8px; color: white; font-weight: bold; }
-            QPushButton:hover { background: #14a098; }
-            QPushButton:pressed { background: #0a524d; }
-            QTextEdit { background: #0a0f0f; color: #e0fcf9; border: 1px solid #2e6f6f; font-family: 'Consolas', 'Courier New', monospace; line-height: 1.4; }
-            QSpinBox, QDoubleSpinBox, QComboBox, QLineEdit { background: #0e1a1a; color: #e0fcf9; border: 1px solid #2e6f6f; padding: 4px; border-radius: 3px; }
-            QSpinBox:focus, QDoubleSpinBox:focus, QComboBox:focus, QLineEdit:focus { border: 1px solid #3df2e5; }
-            QCheckBox { color: #e0fcf9; spacing: 8px; }
-            QCheckBox::indicator { width: 18px; height: 18px; border: 1px solid #2e6f6f; background: #0e1a1a; }
-            QCheckBox::indicator:checked { background: #3df2e5; }
-            QLabel { color: #e0fcf9; }
-        """)
+        # The info box is the one place a monospace font earns its keep --
+        # coordinates and magnitudes line up column-wise.
+        self.info_box.setFont(QtGui.QFontDatabase.systemFont(
+            QtGui.QFontDatabase.FixedFont))
+
+        # Everything else comes from the application stylesheet (views/theme.py).
 
         # Connect internal signal
         self.btn_open_fits.clicked.connect(self.open_fits_clicked.emit)

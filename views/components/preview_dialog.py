@@ -5,20 +5,23 @@ from mpl_toolkits.axes_grid1 import make_axes_locatable
 import numpy as np
 from astropy.visualization import ZScaleInterval
 
+from views.theme import mpl_colors, set_variant, style_figure
+
 class PreviewDialog(QtWidgets.QDialog):
     def __init__(self, image_array, title="Preview", parent=None, zscale=True):
         super().__init__(parent=parent)
         self.setWindowTitle(title)
         self.resize(900, 650)
         layout = QtWidgets.QVBoxLayout(self)
-        
+
         # Figure setup
+        c = mpl_colors()
         fig = Figure(figsize=(7,4), tight_layout=False)
-        fig.patch.set_facecolor('#162a2a')
+        style_figure(fig)
         canvas = FigureCanvas(fig)
         ax = fig.add_subplot(111)
-        ax.set_facecolor('#162a2a')
-        
+        ax.set_facecolor(c["ax_bg"])
+
         if image_array is not None:
             vmin, vmax = None, None
             if zscale:
@@ -27,17 +30,17 @@ class PreviewDialog(QtWidgets.QDialog):
                     vmin, vmax = interval.get_limits(image_array)
                 except:
                     pass
-            
-            im = ax.imshow(image_array, origin='lower', cmap='gray', vmin=vmin, vmax=vmax)
+
+            im = ax.imshow(image_array, origin='lower', cmap=c["image_cmap"], vmin=vmin, vmax=vmax)
             divider = make_axes_locatable(ax)
             cax = divider.append_axes("right", size="4%", pad=0.12)
             cbar = fig.colorbar(im, cax=cax)
             try:
-                cbar.ax.yaxis.set_tick_params(color='white')
+                cbar.ax.yaxis.set_tick_params(color=c["text"])
                 for label in cbar.ax.get_yticklabels():
-                    label.set_color('white')
-                cbar.ax.yaxis.label.set_color('white')
-                cbar.outline.set_edgecolor('#2e6f6f')
+                    label.set_color(c["text"])
+                cbar.ax.yaxis.label.set_color(c["text"])
+                cbar.outline.set_edgecolor(c["spine"])
             except Exception:
                 pass
         
@@ -57,12 +60,6 @@ class PreviewDialog(QtWidgets.QDialog):
         self.btn_cancel.clicked.connect(self.reject)
         self.btn_confirm.clicked.connect(self.accept)
         
-        # Style
-        self.setStyleSheet("""
-            QDialog { background: #162a2a; border: 1px solid #2e6f6f; }
-            QWidget { background: #162a2a; color: #d9f0ec; font-family: Arial; }
-            QPushButton { background: #0f7a73; border-radius: 4px; padding: 10px 20px; color: white; font-weight: bold; }
-            QPushButton:pressed { background: #0a524d; }
-            QPushButton#btn_cancel { background: #7a1f1f; }
-        """)
-        self.btn_cancel.setObjectName("btn_cancel")
+        # Styling comes from the application stylesheet (views/theme.py).
+        set_variant(self.btn_cancel, "danger")
+        set_variant(self.btn_confirm, "primary")

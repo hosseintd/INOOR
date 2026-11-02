@@ -1,6 +1,8 @@
 import os
 from PyQt5 import QtWidgets, QtCore, QtGui
 
+from views.theme import set_variant, theme_manager
+
 class CalibrationSummaryDialog(QtWidgets.QDialog):
     """Professional calibration summary preview dialog with enhanced styling."""
     
@@ -10,39 +12,9 @@ class CalibrationSummaryDialog(QtWidgets.QDialog):
         self.setWindowTitle("Calibration Summary - Please Review Before Start")
         self.setModal(True)
         self.resize(900, 900)
-        self.setStyleSheet("""
-            QDialog {
-                background-color: #1e1e1e;
-                color: #e0e0e0;
-            }
-            QGroupBox {
-                color: #e0e0e0;
-                border: 1px solid #444;
-                border-radius: 4px;
-                margin-top: 10px;
-                padding-top: 10px;
-                font-weight: bold;
-                font-size: 11pt;
-            }
-            QGroupBox::title {
-                subcontrol-origin: margin;
-                left: 12px;
-                padding: 0 3px 0 3px;
-            }
-            QLabel {
-                color: #e0e0e0;
-                font-size: 10pt;
-            }
-            QScrollArea {
-                background-color: #1e1e1e;
-                border: none;
-            }
-            QPushButton {
-                font-size: 10pt;
-                padding: 6px;
-            }
-        """)
-        
+        # This dialog used its own grey palette (#1e1e1e/#e0e0e0/#444), a
+        # different one from every other window in the app. Styling now comes
+        # from the application stylesheet (views/theme.py).
         self.init_ui()
         
     def create_colored_binning_text(self, binning_str):
@@ -50,41 +22,36 @@ class CalibrationSummaryDialog(QtWidgets.QDialog):
         text_edit = QtWidgets.QTextEdit()
         text_edit.setReadOnly(True)
         text_edit.setMaximumHeight(40)
-        text_edit.setStyleSheet("""
-            QTextEdit {
-                background-color: #2d2d2d;
-                border: 1px solid #444;
-                border-radius: 3px;
-                font-family: Courier;
-                font-size: 11pt;
-            }
-        """)
+        # Monospace so the "4096 -> 2048" arrow lines up; colours from the theme.
+        text_edit.setFont(QtGui.QFontDatabase.systemFont(
+            QtGui.QFontDatabase.FixedFont))
         
+        t = theme_manager.tokens()
         # Parse binning_str like "4096x4096→2048x2048" or just "4096x4096 (no binning)"
         if "→" in binning_str or "->" in binning_str:
             parts = binning_str.replace("→", "->").split("->")
             cursor = text_edit.textCursor()
-            
-            # Original size in red
-            fmt_red = QtGui.QTextCharFormat()
-            fmt_red.setForeground(QtGui.QColor("#ff6b6b"))
-            fmt_red.setFontWeight(QtGui.QFont.Bold)
-            cursor.insertText(parts[0].strip(), fmt_red)
-            
+
+            # Original size
+            fmt_from = QtGui.QTextCharFormat()
+            fmt_from.setForeground(QtGui.QColor(t["danger"]))
+            fmt_from.setFontWeight(QtGui.QFont.Bold)
+            cursor.insertText(parts[0].strip(), fmt_from)
+
             # Arrow
             fmt_arrow = QtGui.QTextCharFormat()
-            fmt_arrow.setForeground(QtGui.QColor("#e0e0e0"))
+            fmt_arrow.setForeground(QtGui.QColor(t["text_muted"]))
             cursor.insertText("  →  ", fmt_arrow)
-            
-            # Target size in green
-            fmt_green = QtGui.QTextCharFormat()
-            fmt_green.setForeground(QtGui.QColor("#51cf66"))
-            fmt_green.setFontWeight(QtGui.QFont.Bold)
-            cursor.insertText(parts[1].strip(), fmt_green)
+
+            # Target size
+            fmt_to = QtGui.QTextCharFormat()
+            fmt_to.setForeground(QtGui.QColor(t["success"]))
+            fmt_to.setFontWeight(QtGui.QFont.Bold)
+            cursor.insertText(parts[1].strip(), fmt_to)
         else:
             # No binning - just show in normal text
             fmt_normal = QtGui.QTextCharFormat()
-            fmt_normal.setForeground(QtGui.QColor("#e0e0e0"))
+            fmt_normal.setForeground(QtGui.QColor(t["text"]))
             cursor = text_edit.textCursor()
             cursor.insertText(binning_str, fmt_normal)
         
@@ -124,9 +91,9 @@ class CalibrationSummaryDialog(QtWidgets.QDialog):
         edit_btn.setMinimumWidth(120)
         edit_btn.clicked.connect(self.reject)  # Return to main view
         
-        confirm_btn = QtWidgets.QPushButton("Confirm & Start")
+        confirm_btn = QtWidgets.QPushButton("Confirm && Start")
         confirm_btn.setMinimumWidth(120)
-        confirm_btn.setStyleSheet("background-color: #0d5e5e; font-weight: bold;")
+        set_variant(confirm_btn, "primary")
         confirm_btn.clicked.connect(self.accept)
         
         cancel_btn = QtWidgets.QPushButton("Cancel")
@@ -143,16 +110,6 @@ class CalibrationSummaryDialog(QtWidgets.QDialog):
         """Create a QLineEdit that looks like a label but is selectable and copyable."""
         line_edit = QtWidgets.QLineEdit(text)
         line_edit.setReadOnly(True)
-        line_edit.setStyleSheet("""
-            QLineEdit {
-                background-color: #2d2d2d;
-                border: 1px solid #444;
-                border-radius: 3px;
-                padding: 4px;
-                color: #e0e0e0;
-                font-size: 10pt;
-            }
-        """)
         return line_edit
         
     def add_inventory_section(self, parent_layout):
@@ -166,7 +123,6 @@ class CalibrationSummaryDialog(QtWidgets.QDialog):
             ("Dark Frames", inv.get('darks_summary', 'N/A')),
             ("Flat Frames", inv.get('flats_summary', 'N/A')),
             ("Bias Frames", inv.get('bias_summary', 'N/A')),
-            ("Gain Table", inv.get('gain_summary', 'None')),
             ("Hot Pixel Map", inv.get('hpm_summary', 'None')),
         ]
         
@@ -211,7 +167,7 @@ class CalibrationSummaryDialog(QtWidgets.QDialog):
         # Master title
         title_layout = QtWidgets.QHBoxLayout()
         title_label = QtWidgets.QLabel(f"{name} Master:")
-        title_label.setStyleSheet("font-weight: bold; font-size: 11pt;")
+        set_variant(title_label, "heading")
         title_layout.addWidget(title_label)
         title_layout.addStretch()
         title_layout.addWidget(self.create_selectable_label(info.get('summary', 'N/A')))
@@ -244,10 +200,13 @@ class CalibrationSummaryDialog(QtWidgets.QDialog):
         calib = self.summary_data.get('calibration', {})
         
         items = [
+            # Exposure times sit next to the scaling decision on purpose: with
+            # scaling off, a light/dark mismatch is otherwise nowhere on screen.
+            ("Light Exposure", calib.get('light_exposure', 'unknown')),
+            ("Dark Exposure", calib.get('dark_exposure', 'unknown')),
             ("Dark Scaling", calib.get('dark_scaling', 'No')),
             ("Skip Bias", calib.get('skip_bias', 'No')),
             ("Auto-Flat Generation", calib.get('auto_flat', 'No')),
-            ("Use GainTable", calib.get('use_gain', 'No')),
         ]
         
         for label, value in items:
@@ -297,7 +256,7 @@ class CalibrationSummaryDialog(QtWidgets.QDialog):
         
         # Processing sequence
         seq_label = QtWidgets.QLabel("Per-frame sequence:")
-        seq_label.setStyleSheet("font-weight: bold; font-size: 11pt;")
+        set_variant(seq_label, "heading")
         layout.addWidget(seq_label)
         
         sequence = light.get('sequence', [])

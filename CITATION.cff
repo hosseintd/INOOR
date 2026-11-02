@@ -1,0 +1,31 @@
+cff-version: 1.2.0
+message: "If you use INOOR, please cite it using these metadata."
+type: software
+title: "INOOR: Iranian National Observatory Optical Reduction"
+version: 1.0.0
+date-released: 2026-11-02
+license: GPL-3.0-only
+repository-code: "https://github.com/hosseintd/INOOR"
+abstract: >-
+  INOOR is a GUI-based application for reducing images from the 3.4 m telescope
+  of the Iranian National Observatory (INO340) without writing code. It takes raw
+  frames to calibrated, cleaned frames, then makes scientific measurements on them,
+  such as astrometry, aperture photometry, light curves and extinction coefficients,
+  and looks up sources in the Pan-STARRS1 catalog for comparison.
+keywords:
+  - astronomy software
+  - data reduction
+  - calibration
+  - photometry
+  - light curves
+  - astrometry
+  - INO340
+authors:
+  - family-names: Torkzadeh
+    given-names: Hossein
+    orcid: "https://orcid.org/0009-0009-0775-0430"
+    affiliation: "Department of Physics, Isfahan University of Technology, Isfahan, Iran"
+  - family-names: Shakeri
+    given-names: Soroush
+    orcid: "https://orcid.org/0000-0002-1765-0494"
+    affiliation: "Department of Physics, Isfahan University of Technology, Isfahan, Iran"

@@ -3,18 +3,26 @@ from PyQt5 import QtWidgets, QtCore, QtGui
 from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
 from matplotlib.figure import Figure
 
+from views.theme import (paper_figure_colors, save_publication_figure,
+                         set_variant)
+
 class ExtinctionPlotDialog(QtWidgets.QDialog):
-    def __init__(self, parent, airmass, mags, errs, k, intercept, k_err):
+    def __init__(self, parent, airmass, mags, errs, k, intercept, k_err,
+                 chi2_nu=None, k_err_scaled=None):
         super().__init__(parent)
         self.setWindowTitle("Atmospheric Extinction Fit (k)")
         self.resize(1100, 750)
-        
+
         self.airmass = np.array(airmass)
         self.mags = np.array(mags)
         self.errs = np.array(errs)
         self.k = k
         self.intercept = intercept
         self.k_err = k_err
+        # reduced chi-square of the fit, and k_err * sqrt(chi2_nu) (shown when
+        # the points scatter more than their error bars allow)
+        self.chi2_nu = chi2_nu
+        self.k_err_scaled = k_err_scaled
         
         # UI State
         self.show_legend = True
@@ -25,13 +33,7 @@ class ExtinctionPlotDialog(QtWidgets.QDialog):
         self._update_plot()
 
     def _setup_ui(self):
-        self.setStyleSheet("""
-            QDialog { background: #162a2a; color: #d9f0ec; }
-            QGroupBox { border: 1px solid #2e6f6f; margin-top: 10px; font-weight: bold; }
-            QPushButton { background: #0f7a73; color: white; border-radius: 4px; padding: 6px; }
-            QLabel { color: #d9f0ec; }
-            QCheckBox { color: #d9f0ec; }
-        """)
+        # Styling comes from the application stylesheet (views/theme.py).
         
         main_layout = QtWidgets.QHBoxLayout(self)
         
@@ -39,7 +41,9 @@ class ExtinctionPlotDialog(QtWidgets.QDialog):
         plot_container = QtWidgets.QWidget()
         plot_layout = QtWidgets.QVBoxLayout(plot_container)
         self.fig = Figure(figsize=(8, 6), tight_layout=True)
-        self.fig.patch.set_facecolor('white')
+        # White on screen as before, except under the night theme. The saved
+        # file is always white -- see paper_figure_colors/save_publication_figure.
+        self.fig.patch.set_facecolor(paper_figure_colors()["fig_bg"])
         self.canvas = FigureCanvas(self.fig)
         plot_layout.addWidget(self.canvas)
         main_layout.addWidget(plot_container, stretch=1)
@@ -53,10 +57,18 @@ class ExtinctionPlotDialog(QtWidgets.QDialog):
         g_results = QtWidgets.QGroupBox("Fit Results")
         rl = QtWidgets.QFormLayout(g_results)
         self.lbl_k = QtWidgets.QLabel(f"{self.k:.5f} \u00b1 {self.k_err:.5f}")
-        self.lbl_k.setStyleSheet("color: #00ff00; font-weight: bold;")
+        set_variant(self.lbl_k, "success")
         self.lbl_c = QtWidgets.QLabel(f"{self.intercept:.4f}")
         rl.addRow("Extinction (k):", self.lbl_k)
         rl.addRow("Intercept (c):", self.lbl_c)
+        if self.chi2_nu is not None:
+            rl.addRow("chi2_nu:", QtWidgets.QLabel(f"{self.chi2_nu:.2f}"))
+            if self.chi2_nu > 1 and self.k_err_scaled is not None:
+                lbl = QtWidgets.QLabel(f"± {self.k_err_scaled:.5f}")
+                lbl.setToolTip("k error scaled by sqrt(chi2_nu): the points scatter "
+                               "more than their error bars allow.")
+                set_variant(lbl, "warning")
+                rl.addRow("k error, scaled:", lbl)
         sb_layout.addWidget(g_results)
         
         # Plot Options
@@ -97,35 +109,44 @@ class ExtinctionPlotDialog(QtWidgets.QDialog):
         main_layout.addWidget(sidebar)
 
     def _update_plot(self):
+        c = paper_figure_colors()
+        ink = c["ink"]
         self.fig.clear()
+        self.fig.patch.set_facecolor(c["fig_bg"])
         ax = self.fig.add_subplot(111)
-        ax.set_facecolor('white')
-        
+        ax.set_facecolor(c["ax_bg"])
+
         # Plot measurements
-        ax.errorbar(self.airmass, self.mags, yerr=self.errs, fmt='o', 
+        ax.errorbar(self.airmass, self.mags, yerr=self.errs, fmt='o',
                     color=self.point_color, label='Measurements', capsize=3)
-        
+
         # Plot fit line
         xs = np.linspace(self.airmass.min() * 0.95, self.airmass.max() * 1.05, 100)
         ys = self.intercept + self.k * xs
-        
+
         equation = f"y = ({self.k:.4f} \u00b1 {self.k_err:.4f})x + {self.intercept:.3f}"
         ax.plot(xs, ys, color=self.line_color, lw=2, label=equation if self.chk_legend.isChecked() else "Linear Fit")
-        
-        ax.set_xlabel("Airmass (X)", color='black', fontsize=12)
-        ax.set_ylabel("Instrumental Magnitude", color='black', fontsize=12)
-        ax.set_title("Extinction Coefficient Fit", color='black', fontsize=14)
+
+        ax.set_xlabel("Airmass (X)", color=ink, fontsize=12)
+        ax.set_ylabel("Instrumental Magnitude", color=ink, fontsize=12)
+        ax.set_title("Extinction Coefficient Fit", color=ink, fontsize=14)
         ax.invert_yaxis()
-        
+
         if self.chk_grid.isChecked():
-            ax.grid(True, ls=':', alpha=0.6)
-            
+            ax.grid(True, ls=':', color=c["grid"], alpha=0.6)
+
         if self.chk_legend.isChecked():
-            ax.legend(loc='best', fontsize=10, frameon=True, framealpha=0.8)
-            
-        for sp in ax.spines.values(): sp.set_color('black')
-        ax.tick_params(colors='black')
-        
+            leg = ax.legend(loc='best', fontsize=10, frameon=True, framealpha=0.8)
+            leg.get_frame().set_facecolor(c["fig_bg"])
+            leg.get_frame().set_edgecolor(c["spine"])
+            for txt in leg.get_texts():
+                txt.set_color(ink)
+
+        for sp in ax.spines.values(): sp.set_color(c["spine"])
+        ax.tick_params(colors=ink)
+        for t in ax.get_xticklabels() + ax.get_yticklabels():
+            t.set_color(ink)
+
         self.canvas.draw()
 
     def _pick_p_color(self):
@@ -143,5 +164,5 @@ class ExtinctionPlotDialog(QtWidgets.QDialog):
     def _save_plot(self):
         path, _ = QtWidgets.QFileDialog.getSaveFileName(self, "Save Fit Plot", "extinction_fit.png", "PNG (*.png);;PDF (*.pdf)")
         if path:
-            self.fig.savefig(path, dpi=300, bbox_inches='tight')
+            save_publication_figure(self.fig, path, dpi=300)
             QtWidgets.QMessageBox.information(self, "Saved", f"Plot saved to {path}")

@@ -5,6 +5,7 @@ from PyQt5.QtCore import QObject, pyqtSlot
 from PyQt5.QtWidgets import QFileDialog, QMessageBox, QProgressDialog
 from .astrometry_workers import PlateSolveWorker, CatalogQueryWorker, BatchExportWorker
 from utils.astrometry_config import SCALE_PRESETS, get_export_dir
+from utils.thread_guard import is_worker_busy
 
 class AstrometryController(QObject):
     def __init__(self, model, view):
@@ -31,6 +32,8 @@ class AstrometryController(QObject):
         if path:
             self.model.set_current_file(path)
             self.view.viewer.load_fits(path)
+            # The box still described a star of the previous frame.
+            self.view.info_box.clear()
 
     @pyqtSlot(str)
     def on_preset_changed(self, preset):
@@ -40,21 +43,46 @@ class AstrometryController(QObject):
 
     @pyqtSlot(dict)
     def on_solve_plate(self, params):
+        if is_worker_busy(self, 'worker', view=self.view,
+                          busy_msg="A plate-solve is already in progress."):
+            return
         if not self.model.current_file:
             QMessageBox.warning(None, "No Image", "Please load a FITS image first.")
             return
-        
+
         self.progress = QProgressDialog("Solving plate via Astrometry.net...", "Cancel", 0, 0, self.view)
         self.progress.setWindowTitle("Astrometry Solving")
         self.progress.show()
 
         self.worker = PlateSolveWorker(self.model.current_file, params)
-        self.worker.finished.connect(self.on_solve_finished)
-        self.worker.error.connect(self.on_solve_error)
+        # The handlers get the worker that finished, so a cancelled one can be recognised.
+        worker = self.worker
+        worker.finished.connect(lambda result: self.on_solve_finished(result, worker))
+        worker.error.connect(lambda err_msg: self.on_solve_error(err_msg, worker))
+        # The Cancel button was never connected to anything, so it looked
+        # live and did nothing on a job that can run for 900 s.
+        self.progress.canceled.connect(lambda: self._cancel_solve(worker))
         self.worker.start()
 
-    def on_solve_finished(self, result):
+    def _cancel_solve(self, worker):
+        worker.cancelled = True
+        worker.requestInterruption()
+        self.view.info_box.append("Plate solve cancelled. Astrometry.net may still finish "
+                                  "the job; its result will be ignored.")
+
+    def _close_progress(self):
+        # QProgressDialog.close() emits canceled(), which reported every finished solve
+        # as cancelled.
+        self.progress.canceled.disconnect()
         self.progress.close()
+
+    def on_solve_finished(self, result, worker=None):
+        # Cancel cannot stop astrometry.net, so the worker still returns a result.
+        # Applying it put the cancelled frame's solution on screen (with "Success")
+        # even after the operator had opened another frame.
+        if worker is not None and worker.cancelled:
+            return
+        self._close_progress()
         self.model.update_solve_result(result)
         
         solved_path = result.get('solved_fits')
@@ -77,7 +105,7 @@ class AstrometryController(QObject):
             if (rdls and os.path.exists(rdls)) or (axy and os.path.exists(axy)):
                 self.view.viewer.load_astrometry_files(rdls, axy)
             
-            QMessageBox.information(None, "Success", f"Plate solved successfully.\nWCS written to: {os.path.basename(solved_path)}")
+            QMessageBox.information(None, "Success", f"Plate solved successfully.\nWCS written to:\n{os.path.abspath(solved_path)}")
         else:
             err = result.get('error')
             msg = f"Astrometry.net could not solve the image or return results.\nError: {err}" if err else "Astrometry.net could not solve the image or return results."
@@ -86,8 +114,10 @@ class AstrometryController(QObject):
                 msg = "Astrometry.net could not solve the image. Check the console for detailed error information."
             QMessageBox.warning(None, "Solve Failed", msg)
 
-    def on_solve_error(self, err_msg):
-        self.progress.close()
+    def on_solve_error(self, err_msg, worker=None):
+        if worker is not None and worker.cancelled:
+            return
+        self._close_progress()
         QMessageBox.critical(None, "Astrometry Error", f"Failed to solve: {err_msg}")
 
     @pyqtSlot(str)
@@ -113,19 +143,33 @@ class AstrometryController(QObject):
             QMessageBox.warning(None, "Selection", "Click a star marker first.")
             return
         
+        if is_worker_busy(self, 'cat_worker'):
+            self.view.info_box.append("\nPrevious PS1 query still running...")
+            return
+
         self.view.info_box.append("\nQuerying PS1 catalog...")
         self.cat_worker = CatalogQueryWorker(sky.ra.deg, sky.dec.deg)
-        self.cat_worker.finished.connect(self.on_query_finished)
-        self.cat_worker.error.connect(lambda e: self.view.info_box.append(f"Query error: {e}"))
+        # The query takes seconds. A frame opened meanwhile must not get this star's magnitudes.
+        frame = self.model.current_file
+        self.cat_worker.finished.connect(lambda table: self.on_query_finished(table, frame))
+        self.cat_worker.error.connect(lambda e: self.on_query_error(e, frame))
         self.cat_worker.start()
 
-    def on_query_finished(self, table):
+    def on_query_error(self, err, frame=None):
+        if frame is not None and frame != self.model.current_file:
+            return
+        self.view.info_box.append(f"Query error: {err}")
+
+    def on_query_finished(self, table, frame=None):
+        if frame is not None and frame != self.model.current_file:
+            return
         if len(table) == 0:
             self.view.info_box.append("No PS1 match found.")
             return
         
-        # Closest match
-        row = table[0] # Simplification, workers does more if we wanted
+        # CatalogQueryWorker sorts the table by angular separation to the
+        # clicked position, so row 0 is the nearest catalog source.
+        row = table[0]
         from astropy.coordinates import SkyCoord
         import astropy.units as u
         sc = SkyCoord(row['raMean'], row['decMean'], unit=u.deg)
@@ -144,32 +188,54 @@ class AstrometryController(QObject):
 
     @pyqtSlot()
     def on_export_csv(self):
+        if is_worker_busy(self, 'exp_worker', view=self.view,
+                          busy_msg="A CSV export is already in progress."):
+            return
         all_stars = self.view.viewer.export_annotated_list() # list of dicts with ra_deg, dec_deg, kind...
         if not all_stars:
             QMessageBox.information(None, "Export", "No stars to export.")
             return
         
-        # Filter to only include detected sources (green markers, kind='det')
-        green_stars = [s for s in all_stars if s.get('kind') == 'det']
-        if not green_stars:
-            QMessageBox.information(None, "Export", "No detected (green) stars to export.")
+        # Filter to only include detected sources (red markers, kind='det')
+        detected = [s for s in all_stars if s.get('kind') == 'det']
+        if not detected:
+            QMessageBox.information(None, "Export", "No detected stars to export.")
             return
             
         out_dir = get_export_dir()
         fname = f"astrometry_export_{int(time.time())}.csv"
         path = os.path.join(out_dir, fname)
         
-        self.exp_prog = QProgressDialog("Batch querying PS1 for export (detected sources only)...", "Cancel", 0, len(green_stars), self.view)
+        self.exp_prog = QProgressDialog("Batch querying PS1 for export (detected sources only)...", "Cancel", 0, len(detected), self.view)
         self.exp_prog.show()
-        
-        self.exp_worker = BatchExportWorker(green_stars, path)
+
+        self.exp_worker = BatchExportWorker(detected, path)
         self.exp_worker.progress.connect(lambda c, t: self.exp_prog.setValue(c))
         self.exp_worker.finished.connect(self.on_export_finished)
-        self.exp_worker.error.connect(lambda e: QMessageBox.critical(None, "Export Error", e))
+        self.exp_worker.error.connect(self.on_export_error)
         # Connect cancel button to stop the worker
         self.exp_prog.canceled.connect(self.exp_worker.requestInterruption)
         self.exp_worker.start()
 
+    def on_export_error(self, err):
+        self.exp_prog.close()
+        QMessageBox.critical(None, "Export Error", err)
+
     def on_export_finished(self, path):
         self.exp_prog.close()
+        if not path:
+            # Cancelled: the worker emits an empty path so this handler still
+            # runs and closes the dialog.
+            QMessageBox.information(None, "Export Cancelled",
+                                    "The catalogue export was cancelled; no file "
+                                    "was written.")
+            return
+        failed = self.exp_worker.failed_queries
+        if failed:
+            QMessageBox.warning(
+                None, "Export Incomplete",
+                f"Exported to: {path}\n\nThe PS1 query failed for {len(failed)} of "
+                f"{len(self.exp_worker.stars)} stars (no network, or MAST unavailable), "
+                f"so their magnitude columns are empty.\n\nFirst error: {failed[0][:300]}")
+            return
         QMessageBox.information(None, "Export Success", f"Exported to: {path}")

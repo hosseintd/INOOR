@@ -1,10 +1,12 @@
 import sys
 import os
-from PyQt5 import QtWidgets, QtGui
+from PyQt5 import QtCore, QtWidgets, QtGui
 
 current_dir = os.path.dirname(os.path.abspath(__file__))
 if current_dir not in sys.path:
     sys.path.append(current_dir)
+
+from views.theme import ThemeSwitcher, theme_manager
 
 from models.session_model import SessionModel
 from views.create_master_view import CreateMasterView
@@ -40,8 +42,12 @@ class MainWindow(QtWidgets.QMainWindow):
         self.session_model_calib = SessionModel()
 
         tabs = QtWidgets.QTabWidget()
+        tabs.setDocumentMode(True)
+        # Theme picker parks in the tab strip's own corner, so it is reachable
+        # from every tab without spending a menu bar on it.
+        tabs.setCornerWidget(ThemeSwitcher(), QtCore.Qt.TopRightCorner)
 
-        # --- Tab 0: Welcome / Guide 
+        # --- Tab 0: Welcome / Guide
         self.help_view = HelpView()
         self.help_controller = HelpController(self.help_view)
         tabs.addTab(self.help_view, "Welcome / Guide")
@@ -70,8 +76,75 @@ class MainWindow(QtWidgets.QMainWindow):
 
         self.setCentralWidget(tabs)
 
+    def closeEvent(self, event):
+        """Stop every running worker before the window goes away.
+
+        Without this, quitting during a long job destroyed a Python object that
+        still owned a running QThread and Qt aborted the process.
+        """
+        from utils.thread_guard import stop_workers
+
+        total = 0
+        for name in ('create_master_controller', 'calibration_controller',
+                     'multi_phot_controller', 'astrometry_controller',
+                     'help_controller'):
+            ctrl = getattr(self, name, None)
+            if ctrl is not None:
+                total += stop_workers(ctrl)
+        if total:
+            from utils.logging_config import get_logger
+            get_logger(__name__).info("Stopped %d running worker(s) on exit", total)
+        super().closeEvent(event)
+
+def _install_excepthook():
+    """Log and show unhandled exceptions instead of letting Qt abort silently.
+
+    PyQt5 calls abort() on an exception that escapes a slot, so a bug in a
+    handler took the whole application down with nothing on screen and, in a
+    frozen build, nothing anywhere. Now it is logged to Output/logs/inoor.log
+    and shown, and the app stays up so unsaved work is not lost.
+    """
+    import traceback
+    from utils.logging_config import get_logger
+
+    log = get_logger("inoor")
+    previous = sys.excepthook
+
+    def handler(exc_type, exc, tb):
+        if issubclass(exc_type, KeyboardInterrupt):
+            previous(exc_type, exc, tb)
+            return
+        log.error("Unhandled exception", exc_info=(exc_type, exc, tb))
+        try:
+            QtWidgets.QMessageBox.critical(
+                None, "Unexpected Error",
+                f"{exc_type.__name__}: {exc}\n\n"
+                "The application is still running, but this operation did not "
+                "complete. Details are in Output/logs/inoor.log.\n\n"
+                + "".join(traceback.format_exception(exc_type, exc, tb))[-1500:])
+        except Exception:
+            previous(exc_type, exc, tb)
+
+    sys.excepthook = handler
+
+
 def main():
+    from utils.logging_config import setup_logging
+    setup_logging()
+    _install_excepthook()
+
+    # Must be set before the QApplication exists, or Qt ignores them and the
+    # whole UI renders at 1x on a scaled 4K display.
+    QtWidgets.QApplication.setAttribute(QtCore.Qt.AA_EnableHighDpiScaling, True)
+    QtWidgets.QApplication.setAttribute(QtCore.Qt.AA_UseHighDpiPixmaps, True)
+
     app = QtWidgets.QApplication(sys.argv)
+    # Organisation/app names are what QSettings keys off, so set them before
+    # anything reads a saved preference.
+    app.setOrganizationName("INO")
+    app.setApplicationName("INOOR")
+    theme_manager.apply(theme_manager.load_saved(), save=False)
+
     win = MainWindow()
     win.show()
     sys.exit(app.exec_())

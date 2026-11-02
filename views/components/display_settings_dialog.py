@@ -1,5 +1,7 @@
 from PyQt5 import QtWidgets, QtCore
 
+from views.theme import set_variant
+
 class DisplaySettingsDialog(QtWidgets.QDialog):
     def __init__(self, parent, current_max_dim):
         super().__init__(parent)
@@ -10,12 +12,7 @@ class DisplaySettingsDialog(QtWidgets.QDialog):
         self._setup_ui()
 
     def _setup_ui(self):
-        self.setStyleSheet("""
-            QDialog { background: #162a2a; color: #d9f0ec; }
-            QLabel { color: #d9f0ec; font-weight: bold; }
-            QSpinBox { background: #0e1a1a; color: #d9f0ec; border: 1px solid #2e6f6f; padding: 4px; }
-            QPushButton { background: #0f7a73; color: white; border-radius: 4px; padding: 6px; }
-        """)
+        # Styling comes from the application stylesheet (views/theme.py).
         
         layout = QtWidgets.QVBoxLayout(self)
         
@@ -23,7 +20,10 @@ class DisplaySettingsDialog(QtWidgets.QDialog):
                                 "Higher values show more detail but are slower.\n"
                                 "Scientific measurements are NOT affected.")
         info.setWordWrap(True)
-        info.setStyleSheet("font-weight: normal; font-style: italic; color: #aaffff; margin-bottom: 10px;")
+        set_variant(info, "muted")
+        _italic = info.font()
+        _italic.setItalic(True)
+        info.setFont(_italic)
         layout.addWidget(info)
         
         form = QtWidgets.QFormLayout()

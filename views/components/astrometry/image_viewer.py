@@ -14,6 +14,8 @@ import math
 import warnings
 
 from core.astrometry.image_processor import ImageProcessor
+from views.theme import (mpl_colors, recolor_toolbar_icons, set_variant,
+                         style_figure, theme_manager)
 
 class AstrometryFitsViewer(QWidget):
     """
@@ -30,37 +32,21 @@ class AstrometryFitsViewer(QWidget):
 
         # Top title: filename only
         self.title = QLabel("No image loaded")
-        self.title.setStyleSheet("font-weight: bold; color: #d9f0ec;")
+        set_variant(self.title, "filename")
         layout.addWidget(self.title, 0, Qt.AlignTop)
 
         # Matplotlib figure & canvas
-        self.fig = Figure(figsize=(6, 6), facecolor='#162a2a')
+        self.fig = Figure(figsize=(6, 6))
         self.canvas = FigureCanvas(self.fig)
         self.canvas.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
         layout.addWidget(self.canvas, 1)
 
         # Navigation toolbar
         self.toolbar = NavigationToolbar(self.canvas, self)
-        self.toolbar.setStyleSheet("""
-            QToolBar { background: #1a3a3a; border: none; padding: 2px; }
-            QToolButton { background: #2e6f6f; color: white; border-radius: 3px; margin: 1px; padding: 2px; }
-            QToolButton:hover { background: #3d8f8f; }
-            QToolButton:pressed { background: #1f4f4f; }
-            QLabel { color: #d9f0ec; font-weight: bold; margin-left: 5px; }
-        """)
         layout.addWidget(self.toolbar)
 
         # single axes
         self.ax = self.fig.add_subplot(1, 1, 1)
-        self.ax.set_facecolor('#101616')
-        
-        # Style the axes for visibility in dark theme
-        self.ax.tick_params(colors='#e0fcf9', which='both', labelsize=9)
-        self.ax.xaxis.label.set_color('#e0fcf9')
-        self.ax.yaxis.label.set_color('#e0fcf9')
-        for spine in self.ax.spines.values():
-            spine.set_color('#2e6f6f')
-            spine.set_linewidth(1.5)
 
         # internals / state
         self.processor = None
@@ -99,15 +85,33 @@ class AstrometryFitsViewer(QWidget):
         info_row = QHBoxLayout()
         self.center_label = QLabel("Center: -")
         self.fov_label = QLabel("FoV: -")
-        self.center_label.setStyleSheet("color: #d9f0ec; font-size: 10pt;")
-        self.fov_label.setStyleSheet("color: #d9f0ec; font-size: 10pt;")
-        
+        set_variant(self.center_label, "muted")
+        set_variant(self.fov_label, "muted")
+
         info_row.addWidget(self.center_label)
         info_row.addStretch(1)
         info_row.addWidget(self.fov_label)
         layout.addLayout(info_row)
 
         self.canvas.mpl_connect('pick_event', self._on_pick_internal)
+
+        self._apply_theme()
+        theme_manager.changed.connect(self._apply_theme)
+
+    def _apply_theme(self, *_):
+        """Recolour the figure and the toolbar's baked-in dark icons."""
+        c = mpl_colors()
+        style_figure(self.fig)
+        self.ax.set_facecolor(c["ax_bg"])
+        self.ax.tick_params(colors=c["text"], which="both", labelsize=9)
+        self.ax.xaxis.label.set_color(c["text"])
+        self.ax.yaxis.label.set_color(c["text"])
+        for spine in self.ax.spines.values():
+            spine.set_color(c["spine"])
+            spine.set_linewidth(1.5)
+        # Shipped as dark glyphs for a light background: unreadable until tinted.
+        recolor_toolbar_icons(self.toolbar)
+        self.canvas.draw_idle()
 
     def set_info_widget(self, widget):
         self.info_widget = widget
@@ -184,22 +188,26 @@ class AstrometryFitsViewer(QWidget):
             self.center_label.setText("Center: (unavailable)")
 
         try:
-            c1 = self.processor.wcs.pixel_to_world(0, 0)
-            c2 = self.processor.wcs.pixel_to_world(nx, ny)
-            sep_deg = c1.separation(c2).deg
-            self.fov_label.setText(f"FoV: {sep_deg*60.0:.2f} arcmin")
+            # Width x height, edge to edge along the frame's own axes (pixel centres
+            # run from 0 to n-1, so the edges are at -0.5 and n-0.5).
+            wcs = self.processor.wcs
+            width = wcs.pixel_to_world(-0.5, cy).separation(wcs.pixel_to_world(nx - 0.5, cy)).arcmin
+            height = wcs.pixel_to_world(cx, -0.5).separation(wcs.pixel_to_world(cx, ny - 0.5)).arcmin
+            self.fov_label.setText(f"FoV: {width:.2f} x {height:.2f} arcmin")
         except Exception:
             self.fov_label.setText("FoV: (unavailable)")
 
     def redraw(self, vmin=None, vmax=None):
         self.ax.clear()
-        
-        # Style the axes for visibility in dark theme (must re-apply after clear)
-        self.ax.tick_params(colors='#e0fcf9', which='both', labelsize=9)
-        self.ax.xaxis.label.set_color('#e0fcf9')
-        self.ax.yaxis.label.set_color('#e0fcf9')
+
+        # ax.clear() drops the styling, so re-apply it from the active theme.
+        c = mpl_colors()
+        self.ax.set_facecolor(c["ax_bg"])
+        self.ax.tick_params(colors=c["text"], which='both', labelsize=9)
+        self.ax.xaxis.label.set_color(c["text"])
+        self.ax.yaxis.label.set_color(c["text"])
         for spine in self.ax.spines.values():
-            spine.set_color('#2e6f6f')
+            spine.set_color(c["spine"])
             spine.set_linewidth(1.5)
 
         if self.processor is None:
@@ -221,7 +229,11 @@ class AstrometryFitsViewer(QWidget):
             img_disp = np.flipud(img_disp)
 
         ny_disp, nx_disp = img_disp.shape
-        self.ax.imshow(img_disp, origin='lower', cmap=self.cmap, extent=(0, nx_disp, 0, ny_disp), aspect='equal')
+        # In the night theme the plain grey ramp is swapped for a dimmed one so
+        # a bright stellar core does not undo the operator's dark adaptation.
+        # An explicitly chosen colormap is left exactly as chosen.
+        cmap = c["image_cmap"] if self.cmap == 'gray' else self.cmap
+        self.ax.imshow(img_disp, origin='lower', cmap=cmap, extent=(0, nx_disp, 0, ny_disp), aspect='equal')
 
         def raw_to_display(x_raw, y_raw):
             ny_raw, nx_raw = self.processor.data.shape
@@ -319,7 +331,10 @@ class AstrometryFitsViewer(QWidget):
                     if table_hdu is not None:
                         xs = table_hdu.data['X']; ys = table_hdu.data['Y']
                         f = getattr(self, 'last_downsample_factor', 1) or 1
-                        det_raw = [(float(x) * f, float(y) * f) for x, y in zip(xs.tolist(), ys.tolist())]
+                        # axy X, Y are 1-based pixels of the uploaded image. Down pixel X is the
+                        # mean of full-res pixels f*(X-1) .. f*X-1 (0-based), centred on this.
+                        det_raw = [(f * float(x) - (f + 1) / 2.0, f * float(y) - (f + 1) / 2.0)
+                                   for x, y in zip(xs.tolist(), ys.tolist())]
             except Exception as e: print("AXY load fail:", e)
 
         def merge_and_dedupe_raw(existing_list, new_list, tol_raw=0.6):

@@ -1,122 +1,102 @@
 """
 Exposure time detection and formatting utilities.
-Handles various FITS header formats for exposure time and converts to appropriate units.
+
+THE single implementation for EXPTIME parsing in INOOR. Do not reimplement
+this logic elsewhere: two subtly different heuristics running in different
+pipeline stages can silently disagree about the exposure time of the SAME
+file (this actually happened between calibration and bulk photometry).
+
+The FLI Kepler cameras record EXPTIME in 10-microsecond ticks with a header
+comment like "Duration of exposure in 10us periods". Unit detection uses:
+  1. the header comment of the matched keyword (authoritative), then
+  2. a magnitude heuristic: values > 1e5 are assumed to be 10us ticks
+     (1e5 ticks = 1 s; a genuine 100,000-second exposure is implausible).
 """
 
-def _detect_unit_from_header(header):
-    """
-    Helper function to detect if EXPTIME is in 10µs units from header comment.
-    
-    Args:
-        header: FITS header object or None
-        
-    Returns:
-        bool: True if "10us" or "10µs" found in EXPTIME comment, False otherwise
-    """
-    if header is None:
+# Keyword candidates, in priority order (union of all spellings seen in the
+# codebase's data sources).
+_EXPTIME_KEYS = ('EXPTIME', 'EXP_TIME', 'EXPOSURE', 'EXPT', 'TEXPTIME', 'EXPOS')
+
+# Ticks are 10 microseconds: seconds = ticks * 1e-5
+_TICKS_TO_SECONDS = 1e-5
+_TICKS_HEURISTIC_THRESHOLD = 1e5
+
+
+def _comment_indicates_10us(header, key):
+    """True if the header comment for `key` mentions 10-microsecond units."""
+    try:
+        comment = str(header.comments[key])
+    except Exception:
         return False
-    
-    try:
-        # Try to get the EXPTIME comment using bracket notation
-        comment = ""
-        if hasattr(header, 'comments'):
+    comment_lower = comment.lower()
+    return any(x in comment_lower for x in ('10us', '10µs', '10 us', '10 µs'))
+
+
+def _find_exptime_key(header):
+    """Return the first EXPTIME-like keyword present with a numeric value."""
+    for key in _EXPTIME_KEYS:
+        if key in header:
             try:
-                comment = str(header.comments['EXPTIME'])
-            except (KeyError, TypeError):
-                # If bracket notation fails, try other methods
-                try:
-                    # Some headers might have comments as a dict-like with get()
-                    if hasattr(header.comments, 'get'):
-                        comment = str(header.comments.get('EXPTIME', ''))
-                except:
-                    pass
-        
-        # Check for various forms of 10µs unit specification (case-insensitive)
-        comment_lower = comment.lower()
-        if any(x in comment_lower for x in ['10us', '10µs', '10 us', '10 µs', '10us periods']):
-            print(f"[DEBUG] Detected 10µs units from comment: {comment}")
-            return True
-    except Exception as e:
-        print(f"[DEBUG] Error detecting unit from header: {e}")
-        pass
-    
-    return False
+                float(header[key])
+                return key
+            except (TypeError, ValueError):
+                continue
+    return None
 
 
-def get_exptime_seconds(header):
+def get_exptime_seconds(header, default=1.0):
     """
-    Extract exposure time in seconds from FITS header.
-    Detects unit from header comment: checks for "10us" or "10µs" keywords.
-    If comment indicates 10µs units, converts to seconds.
-    If no comment or comment doesn't mention 10µs, assumes value is already in seconds.
-    
+    Extract exposure time in SECONDS from a FITS header.
+
+    Tries EXPTIME/EXP_TIME/EXPOSURE/EXPT/TEXPTIME/EXPOS in order. Converts
+    from 10-microsecond ticks when the keyword's comment says so, or when the
+    raw value exceeds 1e5 (magnitude heuristic).
+
     Args:
         header: FITS header object or None
-        
+        default: value returned when no usable keyword is found. Pass
+                 default=None when the caller needs to distinguish
+                 "missing" from a real exposure time.
+
     Returns:
-        float: Exposure time in seconds
+        float exposure time in seconds, or `default`.
     """
     if header is None:
-        return 1.0
-    
-    et = header.get('EXPTIME', header.get('EXP_TIME', header.get('EXPOSURE', 1.0)))
-    try:
-        val = float(et)
-        
-        # Use helper to detect unit from header comment
-        is_10us_units = _detect_unit_from_header(header)
-        
-        # Convert if in 10µs units, otherwise assume already in seconds
-        if is_10us_units:
-            return val * 0.00001  # Convert from 10µs to seconds
-        else:
-            return val
-    except:
-        return 1.0
+        return default
+
+    key = _find_exptime_key(header)
+    if key is None:
+        return default
+
+    val = float(header[key])
+    if _comment_indicates_10us(header, key) or val > _TICKS_HEURISTIC_THRESHOLD:
+        return round(val * _TICKS_TO_SECONDS, 6)
+    return round(val, 6)
+
+
+def _format_seconds(exptime_s):
+    """Human formatting: µs below 1 ms, ms below 1 s, else seconds."""
+    if exptime_s < 0.001:
+        return f"{exptime_s * 1e6:.0f}µs"
+    elif exptime_s < 1.0:
+        return f"{exptime_s * 1000:.2f}ms"
+    return f"{exptime_s:.4g}s"
 
 
 def format_exptime(header):
     """
-    Extract and format exposure time from FITS header with appropriate units.
-    
-    Detects unit from header comment: checks for "10us" or "10µs" keywords.
-    If in 10µs units, converts to seconds for internal storage.
-    Then formats for display:
-    - Small values (< 1 second): shows in microseconds (µs) or milliseconds (ms)
-    - Large values (≥ 1 second): shows in seconds (s)
-    
-    Args:
-        header: FITS header object or None
-        
-    Returns:
-        str: Formatted exposure time string (e.g., "30µs", "1.50ms", "93.99s")
+    Extract and format exposure time from a FITS header for display
+    (e.g. "30µs", "1.50ms", "93.99s"). Unit detection is shared with
+    get_exptime_seconds.
     """
     if header is None:
         return "1.0s"
-    
-    et = header.get('EXPTIME', header.get('EXP_TIME', header.get('EXPOSURE', 1.0)))
     try:
-        val = float(et)
-        
-        # Use helper to detect unit from header comment
-        is_10us_units = _detect_unit_from_header(header)
-        
-        # Convert if in 10µs units
-        if is_10us_units:
-            exptime_s = val * 0.00001  # Convert from 10µs to seconds
-        else:
-            exptime_s = val  # Already in seconds
-        
-        # Format based on magnitude
-        if exptime_s < 0.001:  # Less than 1ms
-            exptime_us = exptime_s * 1e6
-            return f"{exptime_us:.0f}µs"
-        elif exptime_s < 1.0:  # Less than 1s
-            exptime_ms = exptime_s * 1000
-            return f"{exptime_ms:.2f}ms"
-        else:
-            return f"{exptime_s:.4g}s"
-    except:
+        exptime_s = get_exptime_seconds(header, default=None)
+        if exptime_s is None:
+            return "N/A"
+        return _format_seconds(exptime_s)
+    except Exception:
         return "N/A"
 
 
@@ -136,21 +116,7 @@ def format_exptime_from_raw(raw_value, is_10us_units=True):
     """
     try:
         val = float(raw_value)
-        
-        # Convert if in 10µs units
-        if is_10us_units:
-            exptime_s = val * 0.00001  # Convert from 10µs to seconds
-        else:
-            exptime_s = val  # Already in seconds
-        
-        # Format based on magnitude
-        if exptime_s < 0.001:  # Less than 1ms
-            exptime_us = exptime_s * 1e6
-            return f"{exptime_us:.0f}µs"
-        elif exptime_s < 1.0:  # Less than 1s
-            exptime_ms = exptime_s * 1000
-            return f"{exptime_ms:.2f}ms"
-        else:
-            return f"{exptime_s:.4g}s"
-    except:
+        exptime_s = val * _TICKS_TO_SECONDS if is_10us_units else val
+        return _format_seconds(exptime_s)
+    except Exception:
         return "N/A"

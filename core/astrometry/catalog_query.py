@@ -42,6 +42,10 @@ def ps1cone(ra, dec, radius_deg, table='mean', release='dr2', format='csv', colu
     params['dec'] = float(dec)
     params['radius'] = radius
     txt = ps1search(table=table, release=release, format=format, columns=columns, verbose=verbose, **params)
+    # MAST answers a cone with no source with an empty body. ascii.read takes an empty
+    # string for a file name and raises PermissionError, which read as a failed query.
+    if not txt.strip():
+        return Table()
     # parse CSV into astropy Table
     tbl = ascii.read(txt)
     return tbl

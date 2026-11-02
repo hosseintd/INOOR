@@ -6,30 +6,44 @@ from matplotlib.figure import Figure
 from mpl_toolkits.axes_grid1 import make_axes_locatable
 from astropy.visualization import ZScaleInterval
 
+from views.theme import mpl_colors, style_figure, theme_manager
+
 class MplImageCanvas(FigureCanvas):
     """
     Matplotlib canvas for showing FITS images with a colorbar.
-    Uses cmap='gray'. Colorbar spacing increased and tick labels set to white.
+    Greyscale display; colours follow the active theme (views/theme.py).
     Provides fast set_clim() updates via set_clim method.
     """
     def __init__(self, parent=None, figsize=(5,5)):
         fig = Figure(figsize=figsize, tight_layout=False)
-        fig.patch.set_facecolor('#162a2a')
         super().__init__(fig)
         self.fig = fig
+        style_figure(fig)
         self.ax = fig.add_subplot(111)
         self.ax.set_axis_off()
         self._im = None
         self._cbar = None
         self.setParent(parent)
+        theme_manager.changed.connect(self._on_theme_changed)
+
+    def _on_theme_changed(self, *_):
+        style_figure(self.fig)
+        c = mpl_colors()
+        self.ax.set_facecolor(c["ax_bg"])
+        if self._im is not None:
+            self._im.set_cmap(c["image_cmap"])
+        if self._cbar is not None:
+            self._style_colorbar(self._cbar)
+        self.draw_idle()
 
     def _style_colorbar(self, cbar):
         try:
-            cbar.ax.yaxis.set_tick_params(color='white')
+            c = mpl_colors()
+            cbar.ax.yaxis.set_tick_params(color=c["text"])
             for label in cbar.ax.get_yticklabels():
-                label.set_color('white')
-            cbar.ax.yaxis.label.set_color('white')
-            cbar.outline.set_edgecolor('#2e6f6f')
+                label.set_color(c["text"])
+            cbar.ax.yaxis.label.set_color(c["text"])
+            cbar.outline.set_edgecolor(c["spine"])
         except Exception:
             pass
 
@@ -37,23 +51,25 @@ class MplImageCanvas(FigureCanvas):
         """
         Show image (numpy 2D). Stores artist at self._im for quick .set_clim updates.
         """
+        c = mpl_colors()
         self.fig.clear()
+        style_figure(self.fig)
         self.ax = self.fig.add_subplot(111)
         self.ax.set_axis_off()
-        self.ax.set_facecolor('#162a2a')
+        self.ax.set_facecolor(c["ax_bg"])
         self._im = None
         self._cbar = None
         if img is None:
             self.draw()
             return
-        
+
         if vmin is None or vmax is None:
             try:
                 vmin, vmax = ZScaleInterval().get_limits(img)
             except Exception:
                 vmin, vmax = np.min(img), np.max(img)
 
-        im = self.ax.imshow(img, origin='lower', cmap='gray', vmin=vmin, vmax=vmax)
+        im = self.ax.imshow(img, origin='lower', cmap=c["image_cmap"], vmin=vmin, vmax=vmax)
         self._im = im
         divider = make_axes_locatable(self.ax)
         cax = divider.append_axes("right", size="4%", pad=0.12)

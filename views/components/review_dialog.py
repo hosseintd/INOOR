@@ -47,11 +47,7 @@ class ReviewDialog(QtWidgets.QDialog):
         layout.addLayout(bottom)
 
         # Style
-        self.setStyleSheet("""
-            QDialog { background: #162a2a; color: #d9f0ec; }
-            QPushButton { background: #0f7a73; border-radius: 4px; padding: 6px; color: white; }
-            QLabel, QCheckBox { color: #d9f0ec; }
-        """)
+        # Styling comes from the application stylesheet (views/theme.py).
 
         # Connect
         self.btn_prev.clicked.connect(self.on_prev)

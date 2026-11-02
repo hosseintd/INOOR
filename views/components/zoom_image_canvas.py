@@ -5,9 +5,12 @@ from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
 from astropy.visualization import ZScaleInterval
 from mpl_toolkits.axes_grid1 import make_axes_locatable
 
+from views.theme import mpl_colors, style_figure, theme_manager
+
 class ZoomImageCanvas(FigureCanvas):
     """
     Image canvas with scroll-zoom, pan (click-drag potentially), and click signals.
+    Colours follow the active theme (views/theme.py).
     Emits:
       - click_coords(x, y)
       - view_changed((xmin, xmax), (ymin, ymax))
@@ -17,22 +20,45 @@ class ZoomImageCanvas(FigureCanvas):
 
     def __init__(self, parent=None, figsize=(6,6)):
         fig = Figure(figsize=figsize, tight_layout=False)
-        fig.patch.set_facecolor('#162a2a')
         super().__init__(fig)
         self.fig = fig
+        style_figure(fig)
         self.ax = fig.add_subplot(111)
         self.ax.set_axis_off()
         self.im = None
         self.cbar = None
         self._img_shape = None
         self._zoom_base = 1.2
-        
+
         self.mpl_connect('scroll_event', self._on_scroll)
         self.mpl_connect('button_press_event', self._on_click)
         self.setParent(parent)
+        theme_manager.changed.connect(self._on_theme_changed)
+
+    def _on_theme_changed(self, *_):
+        c = mpl_colors()
+        style_figure(self.fig)
+        self.ax.set_facecolor(c["ax_bg"])
+        if self.im is not None:
+            self.im.set_cmap(c["image_cmap"])
+        if self.cbar is not None:
+            self._style_colorbar()
+        self.draw_idle()
+
+    def _style_colorbar(self):
+        try:
+            c = mpl_colors()
+            self.cbar.ax.yaxis.set_tick_params(color=c["text"])
+            for lab in self.cbar.ax.get_yticklabels():
+                lab.set_color(c["text"])
+            self.cbar.outline.set_edgecolor(c["spine"])
+        except Exception:
+            pass
 
     def show_image(self, img, vmin=None, vmax=None, xlim=None, ylim=None, extent=None):
+        c = mpl_colors()
         self.fig.clear()
+        style_figure(self.fig)
         self.ax = self.fig.add_subplot(111)
         self.ax.set_axis_off()
         if img is None:
@@ -55,18 +81,14 @@ class ZoomImageCanvas(FigureCanvas):
             except Exception:
                 vmin, vmax = np.nanmin(img), np.nanmax(img)
                 
-        self.im = self.ax.imshow(img, origin='lower', cmap='gray', vmin=vmin, vmax=vmax, extent=extent)
-        
+        self.im = self.ax.imshow(img, origin='lower', cmap=c["image_cmap"], vmin=vmin, vmax=vmax, extent=extent)
+
         divider = make_axes_locatable(self.ax)
         cax = divider.append_axes("right", size="4%", pad=0.12)
         self.cbar = self.fig.colorbar(self.im, cax=cax)
-        try:
-            self.cbar.ax.yaxis.set_tick_params(color='white')
-            for lab in self.cbar.ax.get_yticklabels():
-                lab.set_color('white')
-            self.cbar.outline.set_edgecolor('#2e6f6f')
-        except: pass
-        
+        self._style_colorbar()
+
+
         if xlim: self.ax.set_xlim(xlim)
         if ylim: self.ax.set_ylim(ylim)
         

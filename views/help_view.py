@@ -1,6 +1,8 @@
 import os
 from PyQt5 import QtWidgets, QtCore, QtGui
 
+from .theme import set_variant, theme_manager
+
 class HelpView(QtWidgets.QWidget):
     def __init__(self):
         super().__init__()
@@ -9,6 +11,67 @@ class HelpView(QtWidgets.QWidget):
         self.image_labels = []
         self.section_widgets = {}
         self.init_ui()
+        self._apply_theme()
+        theme_manager.changed.connect(self._apply_theme)
+
+    def _apply_theme(self, *_):
+        """Colours that cannot come from the global stylesheet.
+
+        The credits block is rich text with inline colours, and the sidebar has
+        its own selected/hover treatment, so both are rebuilt per theme.
+        """
+        t = theme_manager.tokens()
+        self.sidebar_panel.setStyleSheet(
+            f"background-color: {t['bg_surface']};"
+            f"border-right: 1px solid {t['border_muted']};")
+        self.sidebar.setStyleSheet(f"""
+            QListWidget#helpSidebar {{
+                background-color: transparent;
+                color: {t['text']};
+                border: none;
+                font-size: 11pt;
+                outline: none;
+                padding-top: 10px;
+            }}
+            QListWidget#helpSidebar::item {{
+                padding: 14px 18px;
+                border-bottom: 1px solid {t['border_muted']};
+            }}
+            QListWidget#helpSidebar::item:selected {{
+                background-color: {t['accent']};
+                color: {t['text_on_accent']};
+                font-weight: bold;
+            }}
+            QListWidget#helpSidebar::item:hover:!selected {{
+                background-color: {t['bg_raised']};
+            }}
+        """)
+        self.zoom_widget.setStyleSheet(
+            f"background-color: {t['bg_base']};"
+            f"border-top: 1px solid {t['border_muted']};")
+        self.content_widget.setStyleSheet(f"background-color: {t['bg_base']};")
+        self.scroll_area.setStyleSheet(
+            f"QScrollArea {{ background-color: {t['bg_base']}; border: none; }}")
+
+        for lbl in self.heading_labels:
+            lbl.setStyleSheet(
+                f"color: {t['text_heading']}; border-bottom: 2px solid {t['border']};")
+        for lbl in self.image_frames:
+            lbl.setStyleSheet(
+                f"border: 1px solid {t['border_muted']}; border-radius: 4px;")
+        self.lbl_credits.setText(self._credits_html(t))
+        self._fit_paragraph(self.lbl_credits)
+
+    def _fit_paragraph(self, lbl):
+        """The width of the images, and the height the text needs at that width.
+
+        The scroll area squeezes the layout to its minimum size, and a word-wrapped
+        label's minimum is shorter than its text, so a long paragraph lost its end.
+        """
+        width = int(800 * self.zoom_factor)
+        lbl.ensurePolished()
+        lbl.setFixedWidth(width)
+        lbl.setMinimumHeight(lbl.heightForWidth(width))
 
     def init_ui(self):
         # Main layout
@@ -17,9 +80,9 @@ class HelpView(QtWidgets.QWidget):
         main_layout.setSpacing(0)
 
         # Left Sidebar Panel
-        sidebar_panel = QtWidgets.QWidget()
+        # Colours are applied in _apply_theme(); this only builds the widgets.
+        self.sidebar_panel = sidebar_panel = QtWidgets.QWidget()
         sidebar_panel.setFixedWidth(200)
-        sidebar_panel.setStyleSheet("background-color: #1a2e2e; border-right: 1px solid #2e6f6f;")
         sidebar_layout = QtWidgets.QVBoxLayout(sidebar_panel)
         sidebar_layout.setContentsMargins(0, 0, 0, 0)
         sidebar_layout.setSpacing(0)
@@ -27,28 +90,6 @@ class HelpView(QtWidgets.QWidget):
         # Left Sidebar for navigation
         self.sidebar = QtWidgets.QListWidget()
         self.sidebar.setObjectName("helpSidebar")
-        self.sidebar.setStyleSheet("""
-            QListWidget#helpSidebar {
-                background-color: transparent;
-                color: #d9f0ec;
-                border: none;
-                font-size: 14px;
-                outline: none;
-                padding-top: 10px;
-            }
-            QListWidget#helpSidebar::item {
-                padding: 15px 20px;
-                border-bottom: 1px solid #233f3f;
-            }
-            QListWidget#helpSidebar::item:selected {
-                background-color: #0f7a73;
-                color: white;
-                font-weight: bold;
-            }
-            QListWidget#helpSidebar::item:hover:!selected {
-                background-color: #1c3d3d;
-            }
-        """)
 
         categories = [
             "Welcome",
@@ -62,35 +103,21 @@ class HelpView(QtWidgets.QWidget):
         self.sidebar.setCurrentRow(0)
 
         # Zoom Controls
-        zoom_widget = QtWidgets.QWidget()
-        zoom_widget.setStyleSheet("background-color: #162a2a; border-top: 1px solid #2e6f6f;")
+        self.zoom_widget = zoom_widget = QtWidgets.QWidget()
         zoom_layout = QtWidgets.QHBoxLayout(zoom_widget)
-        zoom_layout.setContentsMargins(10, 15, 10, 15)
-        
-        btn_style = """
-            QPushButton {
-                background-color: #0f7a73;
-                color: white;
-                border: none;
-                border-radius: 4px;
-                padding: 5px 10px;
-                font-weight: bold;
-                font-size: 16px;
-            }
-            QPushButton:hover { background-color: #139c93; }
-        """
-        
-        self.btn_zoom_out = QtWidgets.QPushButton("-")
+        zoom_layout.setContentsMargins(10, 12, 10, 12)
+
+        self.btn_zoom_out = QtWidgets.QPushButton("−")
         self.btn_zoom_out.setCursor(QtCore.Qt.PointingHandCursor)
-        self.btn_zoom_out.setStyleSheet(btn_style)
-        
+        set_variant(self.btn_zoom_out, "primary")
+
         self.btn_zoom_in = QtWidgets.QPushButton("+")
         self.btn_zoom_in.setCursor(QtCore.Qt.PointingHandCursor)
-        self.btn_zoom_in.setStyleSheet(btn_style)
-        
+        set_variant(self.btn_zoom_in, "primary")
+
         self.lbl_zoom = QtWidgets.QLabel("Zoom: 100%")
         self.lbl_zoom.setAlignment(QtCore.Qt.AlignCenter)
-        self.lbl_zoom.setStyleSheet("color: #d9f0ec; font-size: 13px; border: none;")
+        set_variant(self.lbl_zoom, "muted")
 
         self.btn_zoom_out.clicked.connect(self._zoom_out)
         self.btn_zoom_in.clicked.connect(self._zoom_in)
@@ -105,10 +132,8 @@ class HelpView(QtWidgets.QWidget):
         # Right Content Area (QScrollArea)
         self.scroll_area = QtWidgets.QScrollArea()
         self.scroll_area.setWidgetResizable(True)
-        self.scroll_area.setStyleSheet("QScrollArea { background-color: #162a2a; border: none; } QScrollBar:vertical { background: #162a2a; width: 10px; } QScrollBar::handle:vertical { background: #2e6f6f; border-radius: 5px; } QScrollBar::handle:vertical:hover { background: #0f7a73; }")
 
         self.content_widget = QtWidgets.QWidget()
-        self.content_widget.setStyleSheet("background-color: #162a2a;")
         self.content_layout = QtWidgets.QVBoxLayout(self.content_widget)
         self.content_layout.setContentsMargins(30, 0, 30, 40)
         self.content_layout.setSpacing(20)
@@ -121,6 +146,23 @@ class HelpView(QtWidgets.QWidget):
 
         main_layout.addWidget(sidebar_panel)
         main_layout.addWidget(self.scroll_area)
+
+    @staticmethod
+    def _credits_html(t):
+        """Rich text carries its own link colour, so it is rebuilt per theme."""
+        link = t["accent_hover"] if t["is_dark"] else t["accent"]
+        a = f'style="color: {link}; text-decoration: none;"'
+        return f"""
+        <p style='line-height:1.6;'>
+        <b>Version:</b> V1.0.0 <br><br>
+        <b>Developer:</b> <a href="https://github.com/hosseintd" {a}>Hossein Torkzadeh</a> and Soroush Shakeri (Advisor)<br>
+        <b>Repository:</b> <a href="https://github.com/hosseintd/INOOR" {a}>GitHub / INOOR</a><br>
+        <b>License:</b> GNU General Public License v3<br><br>
+        Special thanks to Parisa Hashemi, Saeid Karimi Mianrudi, Hamed Altafi and Reza Rezaei for their invaluable comments and fruitful discussions.<br>
+        We also thank the INO340 Scientific and Technical staff.<br><br>
+        <i>Developed for the Iranian National Observatory (INO340).</i>
+        </p>
+        """
 
     def load_help_file(self, file_path):
         pass # Not used in native layout mode
@@ -140,6 +182,11 @@ class HelpView(QtWidgets.QWidget):
             self.update_zoom()
 
     def build_document(self):
+        # Collected so _apply_theme can recolour them; they are not reachable
+        # through a plain class selector because each needs its own rule.
+        self.heading_labels = []
+        self.image_frames = []
+
         # 1. Native Banner
         self.lbl_banner = QtWidgets.QLabel()
         self.lbl_banner.setAlignment(QtCore.Qt.AlignCenter)
@@ -150,7 +197,12 @@ class HelpView(QtWidgets.QWidget):
         
         self.lbl_title = QtWidgets.QLabel("INOOR")
         self.lbl_title.setAlignment(QtCore.Qt.AlignCenter)
-        
+        # Had no colour at all, so it fell back to the palette default (black)
+        # and was invisible against the dark background. "brand" sets the
+        # colour without a font-size, leaving the zoom buttons in control.
+        set_variant(self.lbl_title, "brand")
+
+
         self.content_layout.addWidget(self.lbl_banner)
         self.content_layout.addWidget(self.lbl_title)
         
@@ -168,32 +220,32 @@ class HelpView(QtWidgets.QWidget):
                 "id": "master",
                 "title": "1. Create Master Frames",
                 "image": "tab_master.png",
-                "text": "Stacking raw calibration frames such as Bias, Dark, and Flat is the first step in reducing electrical and thermal noise. The Create Master tab allows you to combine multiple identical frames into a single master frame. You can choose between Median and Mean stacking methods. The Median method is recommended as it effectively removes cosmic ray strikes and passing satellite trails (e.g., in sky flats). You can also apply Sigma Clipping, which identifies and rejects outlier pixels after combining.\n\nInteractive Histogram Tools are provided on the right panel to help you evaluate the optical quality of your raw data. Drag the vertical green and red sliders to adjust the display range and visually inspect noise characteristics."
+                "text": "Stacking raw calibration frames such as Bias, Dark, and Flat is the first step of the reduction. The Create Master tab combines several frames of one type into a single master frame. You can choose between Median and Mean stacking methods. The Median method is recommended as it effectively removes cosmic ray strikes and passing satellite trails (e.g., in sky flats). Flats can be scaled to a common level before they are combined, because the sky fades during a sequence of sky flats; 'Scale frames to a common level' is ticked for you when every file name contains the word flat. Bias and Dark frames must not be scaled.\n\nYou can also apply Sigma Clipping, a filter that runs after combining and replaces outlier pixels with the local median. It is off by default, because on a master bias or dark it also erases the stable hot pixels that the master has to subtract. Use 'Bad Frame?' to leave a frame out. 'Start Creating' shows a preview of the master, and the master is saved once you confirm it.\n\nInteractive Histogram Tools are provided on the right panel to help you evaluate your raw data. Drag the vertical green and red lines to adjust the display range."
             },
             {
                 "id": "calibration",
                 "title": "2. Calibration Pipeline",
                 "image": "tab_calibration.png",
-                "text": "The Calibration tab automates the dark subtraction and flat fielding stages. It handles multi-binning geometry and scales varying exposure times. When you configure the tables and click the 'START CALIBRATION' button, the software begins processing the selected light frames. After loading calibration files via the left panel buttons, you can review individual frames or remove corrupted exposures using the 'Review Selected' and 'Remove Selected' buttons. Once the list is ready, press the 'START CALIBRATION' button at the bottom to create and save the master frame.\n\nIf the loaded frame batches have mismatched dimensions, the application performs Auto Binning to resample them to the smallest common resolution. Thermal noise is scaled by exposure time if exact matching dark frames are not available (but we suggest using it only when you are sure the sensor is in the linear regime). Standard Bias subtraction removes the sensor readout bias using the Master Bias frame. Field Flattening then corrects vignetting and dust shadows using the Master Flat. Finally, an optional Cosmic Ray and Hot Pixel filtering pass uses median spatial filters and a 3x3 interpolation to clean possible cosmic rays and hot/bad pixels.",
+                "text": "The Calibration tab turns raw Light frames into calibrated frames. Load each set with 'Type to Load' and 'Browse and Load Files'. Light and Dark frames are required; Bias, Flat and a HotPixelMap are optional. A set can be raw frames, which are combined with the options you choose, or one master frame from the Create Master tab. Select a set or a frame to look at it with 'Review Selected (Large)' or to remove it with 'Remove Selected Files/Set'. 'Check Flat Frames' flags flats that should not go into the master. Then press 'START CALIBRATION' at the bottom and choose the output folder; each Light is saved with the prefix Calibrated_.\n\nIf the loaded sets have mismatched dimensions, the application performs Auto Binning to resample them to the smallest common resolution. A master dark already contains the bias, so subtracting it removes the dark current and the bias together, and no master bias is needed when the exposure times match. If they differ, tick 'Scale Dark by Exposure Time': the master bias is taken out of the master dark, the remaining dark current is scaled to the exposure of each Light, and the bias is put back (we suggest using it only when you are sure the sensor is in the linear regime).\n\nFlat fielding then corrects vignetting and dust shadows using the master flat. If no Flat frames are loaded, INOOR asks whether to make an auto-flat: a low-order polynomial fitted to the sky of each Light with the stars masked, by which that Light is divided. The auto-flat corrects only the large-scale pattern, and not the dust shadows or the pixel-to-pixel response, so it suits a quick reduction. If you answer No, the calibration does not start.\n\nFinally, optional steps clean and bin the result. 'Remove Cosmic Rays / Hot Pixels' replaces a pixel that deviates from the median of a small box by more than the chosen threshold. A HotPixelMap replaces each bad pixel by the mean of the good pixels in a 3x3 box, enlarged if needed. 'Output Binning' averages the pixels before the frame is saved.",
                 "flowchart": "calibration_flowchart.png"
             },
             {
                 "id": "photometry",
                 "title": "3. Multi Photometry",
                 "image": "tab_photometry.png",
-                "text": "After the frames are calibrated, use the Multi Photometry tab to extract instrumental and apparent magnitudes from the selected targets. This tab is designed for tracking stellar brightness across sequential frames.\n\nLoad the dataset of light frames using the designated buttons on the left sidebar. The central panel processes Aperture Extraction, which operates as an automated flux measurement for the chosen objects across the viewing duration. The application can calculate the atmospheric extinction coefficient from the data points to account for localized airmass changes. You can update the Zero-Point alignment by observing known reference catalog stars in the frame to determine absolute magnitudes. When the generation sequence is complete, you can review the plotted interactive light curves directly on the panel interface."
+                "text": "After the frames are calibrated, use the Multi Photometry tab to measure instrumental and apparent magnitudes. Add the calibrated frames with the 'Add' button and click a star on the image. INOOR looks for the star inside the 'Detection Stamp' around the click, then shows its magnitude, error and SNR, with its radial profile and its SNR curve. The gain, read noise and dark charge of the noise model follow the camera mode (High, Low or Merge) and the binning that it reads from the header of each frame.\n\nThe aperture radius follows one of four rules: 'Frame FWHM x factor' (the default), where every star in a frame shares one radius; 'Max SNR (per star)'; 'Curve of growth (per star)'; and a fixed radius ('Fixed aperture for all'). Use the shared radius for light curves and whenever stars are compared, as in a zeropoint. The sky level comes from an annulus around the aperture.\n\n'BULK PHOTOMETRY' measures the selected star in every loaded frame. Its position in each frame is predicted from the stars of the field and refined once with a centroid. A star near saturation, or with a PSF broader than that of the frame, is flagged in the summary, in the result panel and in the CSV file.\n\n'Calculate Zeropoints' finds the zeropoint from reference stars of known magnitude. 'Calc Extinction (k)' fits the atmospheric extinction coefficient over a range of airmass. 'Review Results Table' and 'Show Light Curve' display the results, and 'Save CSV' writes them to a file."
             },
             {
                 "id": "astrometry",
                 "title": "4. Astrometry & Catalog",
                 "image": "tab_astrometry.png",
-                "text": "The Astrometry tab is used for Plate Solving, which transforms arbitrary image pixel coordinates into standard Right Ascension and Declination celestial coordinates. To begin, load your image with the Open FITS image button.\n\nExecuting Plate Solving on the frame analyzes the star field to calculate the exact center orientation and rotation angle. You can then trigger the Catalog Overlay interaction, which fetches and matches the visual field stars against the Pan-STARRS1 reference catalog. Once the target is successfully plate-solved, the Point-and-Click spatial query feature becomes active. Select any specific target object in the image array to instantly view its designation name, photometric magnitude (by clicking on the Query button), and celestial coordinates in the right reporting pane."
+                "text": "The Astrometry tab is used for Plate Solving, which links the image pixels to Right Ascension and Declination. Load your image with the 'Open New FITS Image' button and enter your Astrometry.net API key (the ? button next to the field explains how to get one).\n\n'SOLVE PLATE' uploads the image to nova.astrometry.net, so an internet connection and the key are needed. 'Downsample' reduces the image before the upload. The frame is saved with its solution in the Output/Astrometry folder, and the path is shown when the solve ends. The center and the size of the field (width x height) appear below the image.\n\nAfter the solve, the green circles are the reference stars of astrometry.net and, with 'Show detected markers' on, the red circles are the sources it detected in the frame. Click a circle to see its pixel position, RA and Dec in the right pane. 'Query PS1 for Selected Star' then fetches the g, r, i, z and y magnitudes of that star from the Pan-STARRS1 catalog at MAST. 'Export Annotated Stars (CSV)' writes the detected sources with their positions and PS1 magnitudes to a file."
             }
         ]
 
         for s in SECTIONS:
             lbl_heading = QtWidgets.QLabel(s["title"])
-            lbl_heading.setStyleSheet("color: #aaffff; border-bottom: 2px solid #2e6f6f;")
+            self.heading_labels.append(lbl_heading)
             self.content_layout.addWidget(lbl_heading)
             self.text_labels.append(("h2", lbl_heading, 24, True))
 
@@ -203,7 +255,7 @@ class HelpView(QtWidgets.QWidget):
             if "image" in s:
                 lbl_img = QtWidgets.QLabel()
                 lbl_img.setAlignment(QtCore.Qt.AlignCenter)
-                lbl_img.setStyleSheet("border: 1px solid #2e6f6f; border-radius: 4px;")
+                self.image_frames.append(lbl_img)
                 path = os.path.join(self.help_dir, "images", s["image"])
                 pixmap = QtGui.QPixmap(path)
                 self.image_labels.append((lbl_img, pixmap, 800))
@@ -211,7 +263,7 @@ class HelpView(QtWidgets.QWidget):
 
             lbl_txt = QtWidgets.QLabel(s["text"].replace('\n', '<br>'))
             lbl_txt.setWordWrap(True)
-            lbl_txt.setStyleSheet("color: #ecf0f1; margin-bottom: 20px;")
+            lbl_txt.setContentsMargins(0, 0, 0, 20)
             self.content_layout.addWidget(lbl_txt)
             self.text_labels.append(("p", lbl_txt, 15, False))
 
@@ -226,28 +278,17 @@ class HelpView(QtWidgets.QWidget):
         # 3. Credits Section
         self.content_layout.addSpacing(40)
         lbl_credits_head = QtWidgets.QLabel("About")
-        lbl_credits_head.setStyleSheet("color: #aaffff; border-bottom: 2px solid #2e6f6f;")
+        self.heading_labels.append(lbl_credits_head)
         self.content_layout.addWidget(lbl_credits_head)
         self.text_labels.append(("h2", lbl_credits_head, 24, True))
         
         self.section_widgets["about"] = lbl_credits_head
 
-        credits_html = """
-        <p style='line-height:1.6;'>
-        <b>Version:</b> V1.0.0 <br><br>
-        <b>Developer:</b> <a href="https://github.com/hosseintd" style="color: #66ccff; text-decoration: none;">Hossein Torkzadeh (IUT)</a> and IUT-INO Team<br>
-        <b>Team Members:</b> H. G. Khosroshahi (INO), S. Shakeri (IUT/INO), P. Hashemi (IUT), S. Karimi Mianrudi (IUT), H. Altafi (INO/IUT), R. Rezaei (SUT/INO)<br>
-        <b>Repository:</b> <a href="https://github.com/hosseintd/INOOR" style="color: #66ccff; text-decoration: none;">GitHub / INOOR</a><br><br>
-        We thank the INO340 technical and scientific staff, M. Bidar, A. Javadi, A. Farhang, H. Shalchian, R. Shomali, R. Ravanmehr, H. Jenab, S. M. Mohajer, H. Sadeghi, M. Rostamian, A. Behnam, A. Karimzadeh, T. Shokatpour, R. Mirzaei, H. Alirezaei, S. Masoudieh, A. Danesh<br><br>
-        <b>Affiliation:</b> Iranian National Observatory (INO)
-        </p>
-        """
-        lbl_credits = QtWidgets.QLabel(credits_html)
-        lbl_credits.setWordWrap(True)
-        lbl_credits.setOpenExternalLinks(True)
-        lbl_credits.setStyleSheet("color: #ecf0f1;")
-        self.content_layout.addWidget(lbl_credits)
-        self.text_labels.append(("p", lbl_credits, 15, False))
+        self.lbl_credits = QtWidgets.QLabel()
+        self.lbl_credits.setWordWrap(True)
+        self.lbl_credits.setOpenExternalLinks(True)
+        self.content_layout.addWidget(self.lbl_credits)
+        self.text_labels.append(("p", self.lbl_credits, 15, False))
 
         # 4. Logos Horizontal Layout
         logo_layout = QtWidgets.QHBoxLayout()
@@ -286,6 +327,8 @@ class HelpView(QtWidgets.QWidget):
             font.setPointSize(max(8, int(base_size * self.zoom_factor)))
             font.setBold(is_bold)
             lbl.setFont(font)
+            if typ == "p":
+                self._fit_paragraph(lbl)
 
         # Scale explicit images cleanly (SmoothTransformation preserves maximum detail of original images)
         for lbl, pixmap, base_width in self.image_labels:

@@ -5,6 +5,7 @@ from PyQt5.QtGui import QIcon
 from PyQt5.QtGui import QDesktopServices
 from utils.astrometry_config import SCALE_PRESETS, ASTROMETRY_TIMEOUT, ASTROMETRY_API_KEY
 from utils.gui_helpers import CollapsibleBox
+from views.theme import set_variant
 
 class AstrometryControlPanel(QWidget):
     # Signals for Controller
@@ -110,8 +111,8 @@ class AstrometryControlPanel(QWidget):
         form.addRow(self.adv_box)
 
         self.btn_solve = QPushButton('SOLVE PLATE')
-        self.btn_solve.setMinimumHeight(40)
-        self.btn_solve.setStyleSheet("background-color: #008b8b; color: #ffffff; border: 2px solid #3df2e5; font-size: 11pt;")
+        self.btn_solve.setMinimumHeight(42)
+        set_variant(self.btn_solve, "primary")
         form.addRow(self.btn_solve)
         
         layout.addWidget(grp_solve)
@@ -259,7 +260,7 @@ Need help? Visit the link above for more information.""")
         
         # Result display
         result_label = QLabel("Result: 0.0°")
-        result_label.setStyleSheet("font-weight: bold; color: #3df2e5;")
+        set_variant(result_label, "heading")
         
         def update_result():
             h = hours_spin.value()
@@ -328,7 +329,7 @@ Need help? Visit the link above for more information.""")
         
         # Result display
         result_label = QLabel("Result: 0.0°")
-        result_label.setStyleSheet("font-weight: bold; color: #3df2e5;")
+        set_variant(result_label, "heading")
         
         def update_result():
             sign = 1 if sign_combo.currentText() == "+" else -1

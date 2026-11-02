@@ -10,6 +10,7 @@ if root_dir not in sys.path:
 
 from .components.image_canvas import MplImageCanvas
 from .components.hist_canvas import MplHistCanvas
+from .theme import mpl_colors, set_variant, theme_manager
 from utils.exptime_utils import format_exptime_from_raw
 
 class CalibrationView(QtWidgets.QWidget):
@@ -23,6 +24,7 @@ class CalibrationView(QtWidgets.QWidget):
     set_selection_changed = QtCore.pyqtSignal(str)  # set_type
     
     review_set_clicked = QtCore.pyqtSignal()
+    screen_flats_clicked = QtCore.pyqtSignal()
     start_calibration_clicked = QtCore.pyqtSignal()
     
     param_changed = QtCore.pyqtSignal()
@@ -49,7 +51,7 @@ class CalibrationView(QtWidgets.QWidget):
         
         fl_type = QtWidgets.QFormLayout()
         self.combo_type = QtWidgets.QComboBox()
-        self.combo_type.addItems(["Flat", "Dark", "Bias", "Light", "GainTable", "HotPixelMap"])
+        self.combo_type.addItems(["Flat", "Dark", "Bias", "Light", "HotPixelMap"])
         fl_type.addRow("Type to Load:", self.combo_type)
         al.addLayout(fl_type)
         
@@ -70,8 +72,26 @@ class CalibrationView(QtWidgets.QWidget):
         self.spin_sigma_hi = QtWidgets.QDoubleSpinBox(); self.spin_sigma_hi.setRange(0.1, 50.0); self.spin_sigma_hi.setValue(3.0)
         
         self.chk_scale_dark = QtWidgets.QCheckBox("Scale Dark by Exposure Time")
-        self.chk_scale_dark.setChecked(True)
-        
+        # Off by default. A master dark is pedestal + dark current, and only
+        # the current scales with exposure. On the KL4040 at -10 C the median
+        # pixel accrues under 1 ADU of dark current in 30 s, so there is almost
+        # nothing for the factor to scale -- it mostly multiplies the dark's
+        # own read noise (3.7 -> 9.9 ADU at x3.33) and, with no bias frame to
+        # hold the pedestal out, the quadrant seam along with it (measured
+        # -0.11% with a bias, -1.14% without). Turn it on deliberately when the
+        # dark current really is significant.
+        self.chk_scale_dark.setChecked(False)
+        self.chk_scale_dark.setToolTip(
+            "Off by default.\n\n"
+            "A master dark is pedestal + dark current, and only the dark "
+            "current scales with exposure time. At -10 C this sensor's median "
+            "pixel gains under 1 ADU in 30 s, so scaling buys almost nothing "
+            "and mainly amplifies the dark's read noise.\n\n"
+            "Without a Bias set it also multiplies the pedestal, which puts the "
+            "quadrant seam back across the middle of every frame.\n\n"
+            "Turn it on when the darks really do differ in exposure AND the "
+            "dark current matters -- and load bias frames when you do.")
+
         ol.addRow("Method:", self.combo_method)
         ol.addRow(self.chk_sigma)
         ol.addRow("Lower sigma:", self.spin_sigma_lo)
@@ -87,7 +107,20 @@ class CalibrationView(QtWidgets.QWidget):
         
         self.chk_cosmic = QtWidgets.QCheckBox("Remove Cosmic Rays / Hot Pixels")
         self.chk_cosmic.setChecked(False)
-        
+        # The filter compares each pixel to its local median against a GLOBAL
+        # sigma, so a real stellar core is flagged just like a cosmic ray and
+        # gets flattened. Measured loss with the defaults: ~0.06 mag at a
+        # 200 ADU peak rising to ~0.21 mag at 3000 ADU -- brightness dependent,
+        # so differential photometry does not cancel it.
+        self.chk_cosmic.setToolTip(
+            "WARNING: this filter also clips real stellar cores.\n"
+            "Measured flux loss with sigma=5, radius=1: ~0.06 mag at a 200 ADU\n"
+            "peak, ~0.18 mag at 1000 ADU, ~0.21 mag at 3000 ADU. The error grows\n"
+            "with brightness, so it does NOT cancel in differential photometry.\n"
+            "Leave this off for photometric data.")
+        set_variant(self.chk_cosmic, "warning")
+
+
         self.spin_outlier_sigma = QtWidgets.QDoubleSpinBox(); self.spin_outlier_sigma.setRange(0.1, 100.0); self.spin_outlier_sigma.setValue(5.0)
         self.spin_outlier_radius = QtWidgets.QSpinBox(); self.spin_outlier_radius.setRange(1, 10); self.spin_outlier_radius.setValue(1)
         
@@ -101,20 +134,34 @@ class CalibrationView(QtWidgets.QWidget):
         self.grp_post.setLayout(pl)
         left_layout.addWidget(self.grp_post)
 
-        left_layout.addStretch()
+        # These act on the tree selection, so they belong with the panel above
+        # them. Previously a stretch sat here as well as below, which split the
+        # spare height in two and left a large empty gap mid-column.
+        grp_sel = QtWidgets.QGroupBox("Selected Item")
+        selL = QtWidgets.QVBoxLayout(grp_sel)
         self.btn_review_set = QtWidgets.QPushButton("Review Selected (Large)")
+        self.btn_screen_flats = QtWidgets.QPushButton("Check Flat Frames")
+        self.btn_screen_flats.setToolTip(
+            "Measure every loaded flat and flag the ones that should not go "
+            "into the master: outside the linear range, saturated, full of "
+            "stars, or not matching the illumination pattern the other flats "
+            "agree on. Nothing changes until you confirm.")
         self.btn_remove_item = QtWidgets.QPushButton("Remove Selected Files/Set")
-        left_layout.addWidget(self.btn_review_set)
-        left_layout.addWidget(self.btn_remove_item)
-        
+        set_variant(self.btn_remove_item, "danger")
+        selL.addWidget(self.btn_review_set)
+        selL.addWidget(self.btn_screen_flats)
+        selL.addWidget(self.btn_remove_item)
+        left_layout.addWidget(grp_sel)
+
         left_layout.addStretch()
         self.btn_start = QtWidgets.QPushButton("START CALIBRATION")
-        self.btn_start.setMinimumHeight(40)
-        self.btn_start.setStyleSheet("background-color: #0d5e5e; font-weight: bold; border-radius: 6px;")
+        self.btn_start.setMinimumHeight(42)
+        set_variant(self.btn_start, "primary")
         left_layout.addWidget(self.btn_start)
-        
+
         self.lbl_status = QtWidgets.QLabel("Ready")
         self.lbl_status.setAlignment(QtCore.Qt.AlignCenter)
+        set_variant(self.lbl_status, "muted")
         left_layout.addWidget(self.lbl_status)
         layout.addWidget(left_panel)
 
@@ -125,7 +172,10 @@ class CalibrationView(QtWidgets.QWidget):
 
         center_layout.addWidget(QtWidgets.QLabel("Calibration Data Tree"))
         self.tree_data = QtWidgets.QTreeWidget()
-        self.tree_data.setHeaderLabels(["Item", "XBIN", "YBIN", "Size", "Temp (C)", "ExpTime", "Sigma Clip"])
+        self.tree_data.setHeaderLabels(["Use / Item", "XBIN", "YBIN", "Size", "Temp (C)", "ExpTime", "Sigma Clip"])
+        self.tree_data.headerItem().setToolTip(
+            0, "Ticked = the frame takes part in calibration (the default).\n"
+               "Untick a frame to exclude it; excluded rows turn red.")
         self.tree_data.setColumnCount(7)
         self.tree_data.setColumnWidth(0, 220)
         self.tree_data.setColumnWidth(1, 40)
@@ -150,7 +200,7 @@ class CalibrationView(QtWidgets.QWidget):
         
         self.lbl_fname = QtWidgets.QLabel("")
         self.lbl_fname.setAlignment(QtCore.Qt.AlignCenter)
-        self.lbl_fname.setStyleSheet("font-weight: bold; color: #aaffff;")
+        set_variant(self.lbl_fname, "filename")
         right_layout.addWidget(self.lbl_fname)
         
         # Histogram Group (Reorganized)
@@ -171,25 +221,14 @@ class CalibrationView(QtWidgets.QWidget):
         right_layout.addStretch()
         layout.addWidget(right_panel)
 
-        # Styling
-        self.setStyleSheet("""
-            QWidget { background: #162a2a; color: #d9f0ec; font-family: Arial; }
-            QGroupBox { border: 1px solid #2e6f6f; margin-top: 6px; }
-            QGroupBox::title { subcontrol-origin: margin; left: 6px; padding: 0 3px 0 3px; }
-            QPushButton { background: #0f7a73; border-radius: 4px; padding: 6px; color: white; }
-            QPushButton:pressed { background: #0a524d; }
-            QPushButton:disabled { background: #3a3a3a; color: #888; }
-            QTreeWidget { background: #101616; color: #d9f0ec; border: 1px solid #2e6f6f; }
-            QHeaderView::section { background-color: #0e1a1a; color: #d9f0ec; }
-            QLabel { color: #d9f0ec; }
-            QSpinBox, QDoubleSpinBox, QComboBox { background: #0e1a1a; color: #d9f0ec; border: 1px solid #2e6f6f; }
-            QCheckBox, QRadioButton { color: #d9f0ec; }
-        """)
+        # Widget colours come from the application stylesheet (views/theme.py).
+        theme_manager.changed.connect(self._apply_theme)
 
         # Connections
         self.btn_browse.clicked.connect(lambda: self.browse_files_clicked.emit(self.combo_type.currentText()))
         self.btn_remove_item.clicked.connect(self.remove_item_clicked.emit)
         self.btn_review_set.clicked.connect(self.review_set_clicked.emit)
+        self.btn_screen_flats.clicked.connect(self.screen_flats_clicked.emit)
         self.btn_start.clicked.connect(self.start_calibration_clicked.emit)
         
         self.tree_data.itemSelectionChanged.connect(self._on_tree_selection_changed)
@@ -202,6 +241,18 @@ class CalibrationView(QtWidgets.QWidget):
 
         self.canvas_hist.range_changed.connect(self.hist_update_range_clicked.emit)
         self.btn_hist_reset.clicked.connect(lambda: self.hist_update_range_clicked.emit(-1, -1))
+
+    def _apply_theme(self, *_):
+        """Recolour the tree rows, which carry explicit per-item foregrounds."""
+        normal = QtGui.QColor(theme_manager.color("text"))
+        bad = QtGui.QColor(mpl_colors()["danger"])
+        for i in range(self.tree_data.topLevelItemCount()):
+            parent = self.tree_data.topLevelItem(i)
+            parent.setForeground(0, normal)
+            for j in range(parent.childCount()):
+                child = parent.child(j)
+                excluded = child.checkState(0) == QtCore.Qt.Unchecked
+                child.setForeground(0, bad if excluded else normal)
 
     def _on_tree_selection_changed(self):
         item = self.tree_data.currentItem()
@@ -242,8 +293,10 @@ class CalibrationView(QtWidgets.QWidget):
         parent = item.parent()
         set_type = parent.text(0)
         index = parent.indexOfChild(item)
-        is_bad = item.checkState(0) == QtCore.Qt.Checked
-        self.bad_frame_toggled.emit(set_type, index, is_bad)
+        # A ticked box means "use this frame" -- the common convention. The
+        # tree used to mean the opposite: you ticked a frame to CONDEMN it.
+        excluded = item.checkState(0) == QtCore.Qt.Unchecked
+        self.bad_frame_toggled.emit(set_type, index, excluded)
 
     # --- Update API ---
     def update_tree(self, sets_data, metadata_cache=None):
@@ -292,11 +345,12 @@ class CalibrationView(QtWidgets.QWidget):
                     else:
                         child.setText(5, str(et))
 
-                child.setCheckState(0, QtCore.Qt.Checked if i in fs.bad_indices else QtCore.Qt.Unchecked)
-                if i in fs.bad_indices:
-                    child.setForeground(0, QtGui.QColor("red"))
-                else:
-                    child.setForeground(0, QtGui.QColor("#d9f0ec"))
+                # Ticked = included. Frames arrive ticked; unticking excludes.
+                child.setCheckState(0, QtCore.Qt.Unchecked if i in fs.bad_indices
+                                    else QtCore.Qt.Checked)
+                child.setForeground(0, QtGui.QColor(
+                    mpl_colors()["danger"] if i in fs.bad_indices
+                    else theme_manager.color("text")))
         
         # Restore selection AFTER tree is rebuilt
         if saved_set_type:

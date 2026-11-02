@@ -4,6 +4,8 @@ from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
 from matplotlib.figure import Figure
 import matplotlib.pyplot as plt
 
+from views.theme import paper_figure_colors, save_publication_figure
+
 class AdvancedLightCurveDialog(QtWidgets.QDialog):
     def __init__(self, parent, rows):
         super().__init__(parent)
@@ -26,7 +28,10 @@ class AdvancedLightCurveDialog(QtWidgets.QDialog):
         # Settings
         self.x_mode = "Index" # "Index", "UT", "Local"
         self.point_color = "#1f77b4"
-        self.error_color = "black"
+        # None means "follow the plot's ink", so the bars stay visible when the
+        # night theme turns the figure dark. A colour picked in the sidebar
+        # overrides this and is then used verbatim.
+        self.error_color = None
         self.spline_color = "#e63946"
         self.show_spline = True
         
@@ -37,22 +42,17 @@ class AdvancedLightCurveDialog(QtWidgets.QDialog):
 
     def _setup_ui(self):
         # Keep dialog background dark but plot background will be white
-        self.setStyleSheet("""
-            QDialog { background: #162a2a; color: #d9f0ec; }
-            QGroupBox { border: 1px solid #2e6f6f; margin-top: 10px; font-weight: bold; }
-            QPushButton { background: #0f7a73; color: white; border-radius: 4px; padding: 6px; }
-            QLabel { color: #d9f0ec; }
-            QCheckBox { color: #d9f0ec; }
-            QDoubleSpinBox, QSpinBox { background: #0e1a1a; color: #d9f0ec; border: 1px solid #2e6f6f; }
-        """)
+        # Styling comes from the application stylesheet (views/theme.py).
         layout = QtWidgets.QHBoxLayout(self)
         
         # Left: Plot
         plot_container = QtWidgets.QWidget()
         plot_layout = QtWidgets.QVBoxLayout(plot_container)
         self.fig = Figure(figsize=(10, 6), tight_layout=True)
-        # USER: keep the white background of plot
-        self.fig.patch.set_facecolor('white')
+        # USER: keep the white background of plot -- honoured under the dark and
+        # light themes, and in every saved file. The night theme is the one
+        # exception; see paper_figure_colors().
+        self.fig.patch.set_facecolor(paper_figure_colors()["fig_bg"])
         self.canvas = FigureCanvas(self.fig)
         plot_layout.addWidget(self.canvas)
         layout.addWidget(plot_container, stretch=1)
@@ -273,18 +273,21 @@ class AdvancedLightCurveDialog(QtWidgets.QDialog):
         self.canvas.draw()
 
     def _update_plot(self):
+        c = paper_figure_colors()
+        ink = c["ink"]
         self.fig.clear()
+        self.fig.patch.set_facecolor(c["fig_bg"])
         ax = self.fig.add_subplot(111)
-        ax.set_facecolor('white')
-        ax.tick_params(colors='black', labelsize=10)
-        for sp in ax.spines.values(): sp.set_color('black')
+        ax.set_facecolor(c["ax_bg"])
+        ax.tick_params(colors=ink, labelsize=10)
+        for sp in ax.spines.values(): sp.set_color(c["spine"])
 
         x_vals, x_label, subset_idx, plot_date = self._get_x_data()
         y_vals = self.mags[subset_idx]
         e_vals = self.errs[subset_idx]
 
         ax.errorbar(x_vals, y_vals, yerr=e_vals, fmt='o', 
-                   color=self.point_color, ecolor=self.error_color, 
+                   color=self.point_color, ecolor=self.error_color or ink,
                    capsize=self.spin_cap.value(), markersize=self.spin_psize.value(),
                    label='Data Points')
         
@@ -294,7 +297,7 @@ class AdvancedLightCurveDialog(QtWidgets.QDialog):
             ax.xaxis.set_major_formatter(DateFormatter('%H:%M'))
             self.fig.autofmt_xdate(rotation=45)
             if plot_date:
-                ax.set_title(f"Light Curve - {plot_date} ({self.x_mode})", color='black')
+                ax.set_title(f"Light Curve - {plot_date} ({self.x_mode})", color=ink)
 
         if self.chk_spline.isChecked() and len(x_vals) > 3:
             try:
@@ -315,15 +318,21 @@ class AdvancedLightCurveDialog(QtWidgets.QDialog):
             
         ax.invert_yaxis() 
         
-        ax.set_xlabel(x_label, color='black', fontsize=12)
-        ax.set_ylabel("Magnitude", color='black', fontsize=12)
-        
+        ax.set_xlabel(x_label, color=ink, fontsize=12)
+        ax.set_ylabel("Magnitude", color=ink, fontsize=12)
+        for t in ax.get_xticklabels() + ax.get_yticklabels():
+            t.set_color(ink)
+
         if self.chk_grid.isChecked():
-            ax.grid(True, ls=':', color='gray', alpha=0.3)
-        
+            ax.grid(True, ls=':', color=c["grid"], alpha=0.4)
+
         if self.chk_legend.isChecked():
-            ax.legend(loc='best', fontsize=9)
-            
+            leg = ax.legend(loc='best', fontsize=9)
+            leg.get_frame().set_facecolor(c["fig_bg"])
+            leg.get_frame().set_edgecolor(c["spine"])
+            for txt in leg.get_texts():
+                txt.set_color(ink)
+
         self.canvas.draw()
 
     def _pick_p_color(self):
@@ -333,7 +342,8 @@ class AdvancedLightCurveDialog(QtWidgets.QDialog):
             self._update_plot()
 
     def _pick_e_color(self):
-        color = QtWidgets.QColorDialog.getColor(QtGui.QColor(self.error_color))
+        current = self.error_color or paper_figure_colors()["ink"]
+        color = QtWidgets.QColorDialog.getColor(QtGui.QColor(current))
         if color.isValid():
             self.error_color = color.name()
             self._update_plot()
@@ -356,8 +366,10 @@ class AdvancedLightCurveDialog(QtWidgets.QDialog):
             # Temporarily add title
             ax = self.fig.axes[0]
             old_title = ax.get_title()
-            ax.set_title(title, color='black', fontsize=14)
-            self.fig.savefig(path, dpi=dpi, bbox_inches='tight')
+            ax.set_title(title, fontsize=14)
+            # Writes on white paper with black ink whatever the screen theme is,
+            # then puts the on-screen colours back.
+            save_publication_figure(self.fig, path, dpi=dpi)
             ax.set_title(old_title)
-            self.canvas.draw()
+            self._update_plot()
             QtWidgets.QMessageBox.information(self, "Saved", f"Plot saved to {path}")

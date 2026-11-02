@@ -4,6 +4,7 @@ import pandas as pd
 import matplotlib.pyplot as plt
 
 class PhotometryTableDialog(QtWidgets.QDialog):
+    manage_zeropoints_clicked = QtCore.pyqtSignal()
     def __init__(self, rows, parent=None):
         super().__init__(parent)
         self.setWindowTitle("Photometry Results Table - Review")
@@ -17,12 +18,7 @@ class PhotometryTableDialog(QtWidgets.QDialog):
 
     def _setup_ui(self):
         layout = QtWidgets.QVBoxLayout(self)
-        self.setStyleSheet("""
-            QDialog { background: #162a2a; color: #d9f0ec; }
-            QTableWidget { background: #101616; color: #d9f0ec; gridline-color: #2e6f6f; }
-            QHeaderView::section { background: #2e6f6f; color: #d9f0ec; padding: 4px; border: 1px solid #0f7a73; }
-            QPushButton { background: #0f7a73; color: white; border-radius: 4px; padding: 6px; }
-        """)
+        # Styling comes from the application stylesheet (views/theme.py).
         
         self.table = QtWidgets.QTableWidget()
         self.table.setColumnCount(len(self.cols) + 1) # +1 for checkbox
@@ -36,6 +32,10 @@ class PhotometryTableDialog(QtWidgets.QDialog):
         self.btn_save_csv = QtWidgets.QPushButton("Save CSV")
         self.btn_save_zp = QtWidgets.QPushButton("Save Zeropoints")
         self.btn_load_zp = QtWidgets.QPushButton("Load Zeropoints")
+        self.btn_manage_zp = QtWidgets.QPushButton("Manage Zeropoints...")
+        self.btn_manage_zp.setToolTip(
+            "Inspect the zeropoint stored for each frame, see which reference "
+            "star produced it, edit it, or clear it.")
         self.btn_plot = QtWidgets.QPushButton("Light Curve")
         self.btn_close = QtWidgets.QPushButton("Close")
         
@@ -43,6 +43,7 @@ class PhotometryTableDialog(QtWidgets.QDialog):
         btns.addWidget(self.btn_save_csv)
         btns.addWidget(self.btn_save_zp)
         btns.addWidget(self.btn_load_zp)
+        btns.addWidget(self.btn_manage_zp)
         btns.addWidget(self.btn_plot)
         btns.addStretch()
         btns.addWidget(self.btn_close)
@@ -52,6 +53,7 @@ class PhotometryTableDialog(QtWidgets.QDialog):
         self.btn_save_csv.clicked.connect(self.on_save_csv)
         self.btn_save_zp.clicked.connect(self.on_save_zp)
         self.btn_load_zp.clicked.connect(self.on_load_zp)
+        self.btn_manage_zp.clicked.connect(self.manage_zeropoints_clicked.emit)
         self.btn_plot.clicked.connect(self.on_plot)
         self.btn_close.clicked.connect(self.accept)
 

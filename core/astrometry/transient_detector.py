@@ -1,6 +1,21 @@
 """
-Simple transient detection via image subtraction and catalog cross-match.
+EXPERIMENTAL -- Simple transient detection via image subtraction.
+
+*** NOT VALIDATED FOR SCIENCE USE. Currently unused by the GUI. ***
+
+Known limitations that must be fixed before production use:
+  - No registration: science and reference are aligned only by cropping to
+    the overlapping pixel region. Any real pointing offset (even sub-pixel)
+    produces dipole residuals that mimic transients. Reuse the existing
+    registration pipeline (core.align_utils.ransac_align / astroalign)
+    before subtracting.
+  - No PSF matching: only one-sided Gaussian smoothing of the reference;
+    seeing differences between epochs leave strong residuals at every star.
+  - Detection is a plain global-sigma threshold with no deblending,
+    morphology cuts, or catalog cross-match.
 """
+import warnings
+
 import numpy as np
 from astropy.io import fits
 from scipy.ndimage import gaussian_filter
@@ -8,6 +23,10 @@ from astropy.table import Table
 
 class TransientDetector:
     def __init__(self, science_image_processor):
+        warnings.warn(
+            "TransientDetector is EXPERIMENTAL: no image registration or PSF "
+            "matching is performed; detections are not science-grade.",
+            UserWarning, stacklevel=2)
         self.science = science_image_processor
 
     def subtract_reference(self, reference_path, smooth_sigma=1.0):

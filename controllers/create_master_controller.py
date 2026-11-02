@@ -15,8 +15,10 @@ from models.file_set import FileSet
 from views.create_master_view import CreateMasterView
 from views.components.preview_dialog import PreviewDialog
 from core import masterFrame_creator as mfc
+from core import calibration as calib
 from utils.exptime_utils import format_exptime
-from controllers.workers import CreateMasterWorker, HistogramWorker, FitWorker
+from utils.thread_guard import is_worker_busy
+from controllers.workers import CreateMasterWorker, HistogramWorker
 
 class CreateMasterController(QObject):
     def __init__(self, model, view: CreateMasterView):
@@ -38,7 +40,6 @@ class CreateMasterController(QObject):
         self.view.show_full_header_clicked.connect(self.show_full_header)
         self.view.hist_update_range_clicked.connect(self.update_hist_range)
         self.view.hist_reset_clicked.connect(self.reset_hist_range)
-        self.view.hist_bitdepth_changed.connect(self.on_bitdepth_changed)
         
         # --- Connect Model signals ---
         self.model.sets_changed.connect(self.on_sets_changed)
@@ -80,7 +81,13 @@ class CreateMasterController(QObject):
             # Prevent duplicates
             new_files = [p for p in paths if p not in fs.files]
             fs.files.extend(new_files)
-        
+
+        # Level scaling is right for flats and wrong for bias/dark, and the
+        # tab has no reliable frame type, so offer the guess in a checkbox the
+        # user can see and override rather than deciding silently.
+        if fs.files and all("flat" in os.path.basename(p).lower() for p in fs.files):
+            fs.scale_to_common_level = True
+
         self.model.trigger_update()
 
     @pyqtSlot()
@@ -104,9 +111,10 @@ class CreateMasterController(QObject):
         
         self.model.trigger_update()
         if not fs.files:
-            self.view.canvas_image.show_image(None)
-            self.view.canvas_hist.show_hist(None, None)
-            self.view.clear_stats()
+            self._clear_preview()
+        elif self.current_preview_file not in fs.files:
+            # The previewed frame was one of the ones just removed.
+            self._clear_preview()
 
     @pyqtSlot()
     def remove_all_files(self):
@@ -120,9 +128,24 @@ class CreateMasterController(QObject):
         fs.files.clear()
         fs.bad_indices.clear()
         self.model.trigger_update()
+        self._clear_preview()
+
+    def _clear_preview(self):
+        """Forget the previewed frame everywhere it is shown.
+
+        The stats panel and histogram used to be cleared while the filename
+        label, the Header Info panel and current_preview_file kept describing
+        a file that had just been removed -- so "Header Info (current frame)"
+        would report the exposure and date of a bias while the list held only
+        flats, and Show Full Header opened the deleted file.
+        """
+        self.current_preview_file = None
+        self.current_img_data = None
         self.view.canvas_image.show_image(None)
         self.view.canvas_hist.show_hist(None, None)
         self.view.clear_stats()
+        self.view.clear_header_info()
+        self.view.lbl_filename.setText("")
 
     @pyqtSlot(int)
     def select_file(self, row):
@@ -206,14 +229,13 @@ class CreateMasterController(QObject):
         if not fs: return
         
         fs.method = 'mean' if self.view.radio_mean.isChecked() else 'median'
+        fs.scale_to_common_level = self.view.chk_scale_levels.isChecked()
         fs.do_sigma_clip = self.view.chk_sigma.isChecked()
         fs.auto_sigma = self.view.radio_sig_auto.isChecked()
         fs.sigma_lower = self.view.spin_sigma_lo.value()
         fs.sigma_upper = self.view.spin_sigma_hi.value()
         # Dynamically add kernel size to the set model (or handle it in worker)
-        fs.sigma_kernel = self.view.spin_sigma_kernel.value() 
-        fs.create_gain_table = self.view.chk_gain.isChecked()
-        fs.gain_poly_degree = self.view.spin_degree.value()
+        fs.sigma_kernel = self.view.spin_sigma_kernel.value()
 
     @pyqtSlot()
     def create_master(self):
@@ -234,6 +256,11 @@ class CreateMasterController(QObject):
         kernel = getattr(fs, 'sigma_kernel', 5)
         auto_sigma = getattr(fs, 'auto_sigma', False)
         
+        if is_worker_busy(self, 'worker', view=self.view,
+                          busy_msg="A master-creation run is already in progress."):
+            self.view.btn_create_master.setEnabled(True)
+            return
+
         # Pass out_file=None to triggering the Review mode in the worker
         self.worker = CreateMasterWorker(
             out_file=None, 
@@ -244,7 +271,8 @@ class CreateMasterController(QObject):
             upper=upper,
             excludes=list(fs.bad_indices),
             kernel=kernel,
-            auto_sigma=auto_sigma
+            auto_sigma=auto_sigma,
+            scale_levels=fs.scale_to_common_level
         )
         self.worker.progress.connect(lambda f, m: self.view.lbl_status.setText(f"{m} ({f*100:.0f}%)"))
         self.worker.finished.connect(self.on_master_ready_for_review)
@@ -268,15 +296,15 @@ class CreateMasterController(QObject):
             
             if out_path:
                 try:
-                    # Save using the helper from mfc, which handles N-bit conversion and header
-                    # PASS HEADER OBJECT DIRECTLY (to avoid \n issues with dict conversion)
-                    mfc.write_nbit_fits(out_path, data, nbits=12, hdr_extra=header, overwrite=True)
-                    QMessageBox.information(self.view, "Success", f"Master saved:\n{out_path}")
-                    
-                    # Proceed to Gain Table if requested
-                    fs = self.model.get_current_set()
-                    if fs and fs.create_gain_table:
-                        self.start_gain_table_workflow(out_path, fs.gain_poly_degree)
+                    # Same 16-bit ADU convention as the calibrated science
+                    # frames (BSCALE=1, BZERO=32768). The old write_nbit_fits
+                    # pre-scaled to uint16 itself and astropy then overwrote the
+                    # BSCALE/BZERO it had just written, so any master holding a
+                    # pixel above 4095 read back at a completely wrong level.
+                    saved_path = calib.save_fits_16bit(
+                        out_path, data, header=header, overwrite=True,
+                        add_timestamp=False)
+                    QMessageBox.information(self.view, "Success", f"Master saved:\n{saved_path}")
                 except Exception as e:
                     QMessageBox.critical(self.view, "Save Error", str(e))
         else:
@@ -290,17 +318,13 @@ class CreateMasterController(QObject):
             
         first_file = os.path.basename(fs.files[0])
         
-        # 1. Detect Frame Type
+        # 1. Detect Frame Type.
         frame_type = "Frame"
-        if fs.create_gain_table:
-            frame_type = "Gain_Table"
-        else:
-            # Heuristic detection from filename
-            fname_lower = first_file.lower()
-            if "dark" in fname_lower: frame_type = "Dark"
-            elif "bias" in fname_lower: frame_type = "Bias"
-            elif "flat" in fname_lower: frame_type = "Flat"
-            elif "light" in fname_lower: frame_type = "Light"
+        fname_lower = first_file.lower()
+        if "dark" in fname_lower: frame_type = "Dark"
+        elif "bias" in fname_lower: frame_type = "Bias"
+        elif "flat" in fname_lower: frame_type = "Flat"
+        elif "light" in fname_lower: frame_type = "Light"
         
         # 2. Extract Exposure Time
         exp_suffix = ""
@@ -328,31 +352,13 @@ class CreateMasterController(QObject):
             kernel = getattr(fs, 'sigma_kernel', 5)
             sig_suffix = f"_{mode}_sigclipped_kernelsize-{kernel}"
             
-        return f"Master_{frame_type}{exp_suffix}{sig_suffix}.fits"
+        # Mean and median masters of the same frames are different products
+        # and must not be offered the same name.
+        method_suffix = f"_{fs.method}"
+        scale_suffix = "_levelscaled" if fs.scale_to_common_level else ""
 
-    def start_gain_table_workflow(self, master_path, degree):
-        try:
-            arr = mfc.load_fits(master_path)
-            self.fit_worker = FitWorker(arr, degree=degree)
-            self.fit_worker.done.connect(self.on_fit_done)
-            self.fit_worker.failed.connect(lambda m: QMessageBox.critical(self.view, "Fit error", m))
-            self.view.lbl_status.setText("Fitting polynomial...")
-            self.fit_worker.start()
-        except Exception as e:
-            QMessageBox.critical(self.view, "Error", str(e))
-
-    def on_fit_done(self, z_fitted, gain_table, coeffs):
-        self.view.lbl_status.setText("Ready")
-        # Preview dialogs like in legacy
-        dlg = PreviewDialog(z_fitted, title="Fitted Surface Preview", parent=self.view)
-        if dlg.exec_() == QMessageBox.Accepted:
-            dlg2 = PreviewDialog(gain_table, title="Gain Table Preview", parent=self.view)
-            if dlg2.exec_() == QMessageBox.Accepted:
-                save_path, _ = QFileDialog.getSaveFileName(self.view, "Save Gain Table", "gain_table.fits", "FITS (*.fits)")
-                if save_path:
-                    hdu = fits.PrimaryHDU(gain_table.astype('float32'))
-                    hdu.writeto(save_path, overwrite=True)
-                    QMessageBox.information(self.view, "Saved", f"Gain table saved to {save_path}")
+        return (f"Master_{frame_type}{exp_suffix}{method_suffix}"
+                f"{scale_suffix}{sig_suffix}.fits")
 
     @pyqtSlot()
     def estimate_sigma(self):
@@ -433,9 +439,4 @@ class CreateMasterController(QObject):
         self.update_hist_range(vmin, vmax)
         self.view.update_hist_spinboxes(vmin, vmax)
 
-    @pyqtSlot(int)
-    def on_bitdepth_changed(self, bits):
-        # View already handles range update signals if needed via spinboxes
-        # But we don't have a slider anymore to update.
-        pass
 

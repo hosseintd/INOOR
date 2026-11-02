@@ -11,6 +11,7 @@ if root_dir not in sys.path:
 from utils.utils_ui import RangeSlider
 from .components.image_canvas import MplImageCanvas
 from .components.hist_canvas import MplHistCanvas
+from .theme import mpl_colors, set_variant, theme_manager
 
 class CreateMasterView(QtWidgets.QWidget):
     # Signals for Controller
@@ -32,7 +33,6 @@ class CreateMasterView(QtWidgets.QWidget):
     # Histogram range signals
     hist_update_range_clicked = QtCore.pyqtSignal(float, float)
     hist_reset_clicked = QtCore.pyqtSignal()
-    hist_bitdepth_changed = QtCore.pyqtSignal(int)
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -60,6 +60,8 @@ class CreateMasterView(QtWidgets.QWidget):
         self.btn_browse = QtWidgets.QPushButton("Load Files")
         self.btn_remove_file = QtWidgets.QPushButton("Remove Selected")
         self.btn_remove_all = QtWidgets.QPushButton("Remove All")
+        set_variant(self.btn_remove_file, "danger")
+        set_variant(self.btn_remove_all, "danger")
         hbox_file_btns.addWidget(self.btn_browse)
         hbox_file_btns.addWidget(self.btn_remove_file)
         hbox_file_btns.addWidget(self.btn_remove_all)
@@ -75,6 +77,17 @@ class CreateMasterView(QtWidgets.QWidget):
         self.radio_median.setChecked(True)
         ml.addWidget(self.radio_mean)
         ml.addWidget(self.radio_median)
+
+        self.chk_scale_levels = QtWidgets.QCheckBox("Scale frames to a common level")
+        self.chk_scale_levels.setToolTip(
+            "Divide out each frame's own level before combining.\n"
+            "Sky flats fade during the sequence, so without this the median\n"
+            "just picks the middle frame and you keep one frame's noise.\n"
+            "Leave OFF for bias and dark, whose absolute level is the signal.")
+        ml.addWidget(self.chk_scale_levels)
+        self.lbl_scale_hint = QtWidgets.QLabel("For flats. Leave off for bias/dark.")
+        set_variant(self.lbl_scale_hint, "muted")
+        ml.addWidget(self.lbl_scale_hint)
         grp_method.setLayout(ml)
         left_layout.addWidget(grp_method)
 
@@ -82,7 +95,21 @@ class CreateMasterView(QtWidgets.QWidget):
         grp_sigma = QtWidgets.QGroupBox("Sigma Clip?")
         sl = QtWidgets.QVBoxLayout()
         self.chk_sigma = QtWidgets.QCheckBox("Apply sigma clipping (2D Post-filter)")
+        self.chk_sigma.setToolTip(
+            "Replaces spatial outliers in the FINISHED master with the median\n"
+            "of their 35x35 block.\n\n"
+            "On a master bias or dark this erases stable hot pixels, which is\n"
+            "exactly what the master exists to subtract: on a real 6-frame\n"
+            "bias it flattened three 1500 ADU hot pixels to 98 ADU, leaving a\n"
+            "+1486 ADU spike in every calibrated frame. It also rewrites about\n"
+            "as much plain noise as real defects.\n\n"
+            "Leave off unless you specifically want this.")
         sl.addWidget(self.chk_sigma)
+        self.lbl_sigma_hint = QtWidgets.QLabel(
+            "Replaces outliers with the block median.\nErases hot pixels from bias/dark masters.")
+        self.lbl_sigma_hint.setWordWrap(True)
+        set_variant(self.lbl_sigma_hint, "warning")
+        sl.addWidget(self.lbl_sigma_hint)
         
         # Auto/Manual Radios
         hl_sig_mode = QtWidgets.QHBoxLayout()
@@ -107,29 +134,15 @@ class CreateMasterView(QtWidgets.QWidget):
         grp_sigma.setLayout(sl)
         left_layout.addWidget(grp_sigma)
 
-        # Gain Table Group
-        grp_gain = QtWidgets.QGroupBox("Gain Table")
-        gl = QtWidgets.QVBoxLayout()
-        self.chk_gain = QtWidgets.QCheckBox("Create Gain Table?")
-        gl.addWidget(self.chk_gain)
-        gl.addWidget(QtWidgets.QLabel("This is just for Flat frames."))
-        
-        hl_deg = QtWidgets.QHBoxLayout()
-        hl_deg.addWidget(QtWidgets.QLabel("Degree:"))
-        self.spin_degree = QtWidgets.QSpinBox(); self.spin_degree.setRange(1, 6); self.spin_degree.setValue(2)
-        hl_deg.addWidget(self.spin_degree)
-        gl.addLayout(hl_deg)
-        grp_gain.setLayout(gl)
-        left_layout.addWidget(grp_gain)
-
         left_layout.addStretch()
         self.btn_create_master = QtWidgets.QPushButton("Start Creating")
-        self.btn_create_master.setMinimumHeight(40)
-        self.btn_create_master.setStyleSheet("background: #006d5b; font-weight: bold;")
+        self.btn_create_master.setMinimumHeight(42)
+        set_variant(self.btn_create_master, "primary")
         left_layout.addWidget(self.btn_create_master)
-        
+
         self.lbl_status = QtWidgets.QLabel("Ready")
         self.lbl_status.setAlignment(QtCore.Qt.AlignCenter)
+        set_variant(self.lbl_status, "muted")
         left_layout.addWidget(self.lbl_status)
         
         layout.addWidget(left_panel)
@@ -144,7 +157,7 @@ class CreateMasterView(QtWidgets.QWidget):
         
         self.lbl_filename = QtWidgets.QLabel("")
         self.lbl_filename.setAlignment(QtCore.Qt.AlignCenter)
-        self.lbl_filename.setStyleSheet("font-weight: bold; color: #aaffff;")
+        set_variant(self.lbl_filename, "filename")
         center_layout.addWidget(self.lbl_filename)
 
         hbox_nav = QtWidgets.QHBoxLayout()
@@ -217,9 +230,6 @@ class CreateMasterView(QtWidgets.QWidget):
         
         # Controls Form
         form_hist = QtWidgets.QFormLayout()
-        self.spin_bitdepth = QtWidgets.QSpinBox(); self.spin_bitdepth.setRange(1, 32); self.spin_bitdepth.setValue(12)
-        form_hist.addRow("Bit depth:", self.spin_bitdepth)
-        
         hl_manual = QtWidgets.QHBoxLayout()
         self.spin_hist_min = QtWidgets.QDoubleSpinBox(); self.spin_hist_min.setRange(-1e9, 1e9); self.spin_hist_min.setDecimals(4)
         self.spin_hist_max = QtWidgets.QDoubleSpinBox(); self.spin_hist_max.setRange(-1e9, 1e9); self.spin_hist_max.setDecimals(4)
@@ -242,20 +252,8 @@ class CreateMasterView(QtWidgets.QWidget):
 
         layout.addWidget(right_panel)
 
-        # Styling
-        self.setStyleSheet("""
-            QWidget { background: #162a2a; color: #d9f0ec; font-family: Arial; }
-            QGroupBox { border: 1px solid #2e6f6f; margin-top: 6px; }
-            QGroupBox::title { subcontrol-origin: margin; left: 6px; padding: 0 3px 0 3px; }
-            QPushButton { background: #0f7a73; border-radius: 4px; padding: 6px; color: white; }
-            QPushButton:pressed { background: #0a524d; }
-            QPushButton:disabled { background: #3a3a3a; color: #888; }
-            QListWidget { background: #101616; color: #d9f0ec; selection-background-color: #0f7a73; selection-color: white; }
-            QListWidget:item:selected { background: #0f7a73; color: white; border: 1px solid #d9f0ec; }
-            QLabel { color: #d9f0ec; }
-            QSpinBox, QDoubleSpinBox { background: #0e1a1a; color: #d9f0ec; }
-            QRadioButton, QCheckBox { color: #d9f0ec; }
-        """)
+        # Widget colours come from the application stylesheet (views/theme.py).
+        theme_manager.changed.connect(self._apply_theme)
 
         # Connections
         self.btn_browse.clicked.connect(self.on_browse)
@@ -274,6 +272,7 @@ class CreateMasterView(QtWidgets.QWidget):
         # Param Changes
         self.radio_mean.toggled.connect(self.param_changed.emit)
         self.radio_median.toggled.connect(self.param_changed.emit)
+        self.chk_scale_levels.stateChanged.connect(self.param_changed.emit)
         self.chk_sigma.stateChanged.connect(self.param_changed.emit)
         self.radio_sig_auto.toggled.connect(self.param_changed.emit)
         self.radio_sig_manual.toggled.connect(self.param_changed.emit)
@@ -285,17 +284,22 @@ class CreateMasterView(QtWidgets.QWidget):
         self.spin_sigma_lo.valueChanged.connect(self.param_changed.emit)
         self.spin_sigma_hi.valueChanged.connect(self.param_changed.emit)
         self.spin_sigma_kernel.valueChanged.connect(self.param_changed.emit)
-        self.chk_gain.stateChanged.connect(self.param_changed.emit)
-        self.spin_degree.valueChanged.connect(self.param_changed.emit)
         
         # Histogram Controls
         self.canvas_hist.range_changed.connect(self.on_hist_range_changed)
         self.btn_hist_reset.clicked.connect(self.hist_reset_clicked.emit)
-        self.spin_bitdepth.valueChanged.connect(self.on_bitdepth_changed)
         
         # Connect spinboxes to update histogram visual lines too
         self.spin_hist_min.valueChanged.connect(self.on_spin_limits_changed)
         self.spin_hist_max.valueChanged.connect(self.on_spin_limits_changed)
+
+    def _apply_theme(self, *_):
+        """Recolour list rows, which carry an explicit per-item foreground."""
+        normal = QtGui.QColor(theme_manager.color("text"))
+        bad = QtGui.QColor(mpl_colors()["danger"])
+        for i in range(self.list_files.count()):
+            item = self.list_files.item(i)
+            item.setForeground(bad if item.text().endswith(" [BAD]") else normal)
 
     def _step_list(self, delta):
         row = self.list_files.currentRow()
@@ -332,9 +336,6 @@ class CreateMasterView(QtWidgets.QWidget):
         self.canvas_hist.set_limits(self.spin_hist_min.value(), self.spin_hist_max.value())
         self.hist_update_range_clicked.emit(self.spin_hist_min.value(), self.spin_hist_max.value())
 
-    def on_bitdepth_changed(self, val):
-        self.hist_bitdepth_changed.emit(val)
-
     # --- Update API (Called by Controller) ---
     def update_file_list(self, fs):
         self.list_files.blockSignals(True)
@@ -345,7 +346,7 @@ class CreateMasterView(QtWidgets.QWidget):
                 name = os.path.basename(p)
                 item = QtWidgets.QListWidgetItem(name)
                 if i in fs.bad_indices:
-                    item.setForeground(QtGui.QColor('red'))
+                    item.setForeground(QtGui.QColor(mpl_colors()["danger"]))
                     item.setText(name + " [BAD]")
                 self.list_files.addItem(item)
         if current_row >= 0 and current_row < self.list_files.count():
@@ -368,6 +369,11 @@ class CreateMasterView(QtWidgets.QWidget):
         self.lbl_stat_min.setText(f"{stats['min']:.4g}")
         self.lbl_stat_rms.setText(f"{stats['rms']:.4g}")
 
+    def clear_header_info(self):
+        for lbl in [self.lbl_head_exptime, self.lbl_head_temp, self.lbl_head_ybin,
+                    self.lbl_head_xbin, self.lbl_head_gain, self.lbl_head_date]:
+            lbl.setText("N/A")
+
     def clear_stats(self):
         for lbl in [self.lbl_stat_mean, self.lbl_stat_median, self.lbl_stat_std, self.lbl_stat_max, self.lbl_stat_min, self.lbl_stat_rms]:
             lbl.setText("N/A")
@@ -381,11 +387,13 @@ class CreateMasterView(QtWidgets.QWidget):
         self.radio_mean.blockSignals(False)
         self.radio_median.blockSignals(False)
         
+        self.chk_scale_levels.blockSignals(True)
+        self.chk_scale_levels.setChecked(fs.scale_to_common_level)
+        self.chk_scale_levels.blockSignals(False)
+
         self.chk_sigma.setChecked(fs.do_sigma_clip)
         self.spin_sigma_lo.setValue(fs.sigma_lower)
         self.spin_sigma_hi.setValue(fs.sigma_upper)
-        self.chk_gain.setChecked(fs.create_gain_table)
-        self.spin_degree.setValue(fs.gain_poly_degree)
 
     def update_hist_spinboxes(self, mn, mx):
         self.spin_hist_min.blockSignals(True)

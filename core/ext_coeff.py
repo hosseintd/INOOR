@@ -19,65 +19,117 @@ from astropy.time import Time
 from astropy.coordinates import EarthLocation, AltAz, SkyCoord
 import astropy.units as u
 import os
+from utils.exptime_utils import get_exptime_seconds
 # Robust date extractor for common header forms.
 _iso_like_re = re.compile(r'(\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}:\d{2}(?:\.\d{1,6})?)')
 
+def _iso_token(val) -> Optional[str]:
+    """Pull the leading ISO-ish timestamp out of one header value."""
+    if val is None:
+        return None
+    try:
+        s = val.decode('utf-8') if isinstance(val, bytes) else str(val)
+    except Exception:
+        s = str(val)
+    s = s.strip()
+    if not s:
+        return None
+    m = _iso_like_re.search(s)
+    if m:
+        return m.group(1)
+    token = s.split()[0].strip("'\"")
+    return token if ('-' in token and ':' in token) else None
+
+
+# A civil timezone offset is a whole quarter-hour and at most 14 h from UT.
+_TZ_STEP_HOURS = 0.25
+_TZ_MAX_HOURS = 14.0
+
+
+def _is_timezone_offset(delta_hours: float) -> bool:
+    """True if `delta_hours` looks like two clocks in different timezones."""
+    a = abs(delta_hours)
+    if a < 1.0 / 60.0 or a > _TZ_MAX_HOURS:
+        return False
+    return abs(a / _TZ_STEP_HOURS - round(a / _TZ_STEP_HOURS)) < 0.02
+
+
 def get_datetime_from_header(hdr) -> Optional[str]:
     """
-    Try several header keys and extract a usable ISO-ish timestamp string.
-    Returns string suitable for astropy.Time(format='isot') or None if not found.
+    The UT capture time, as an ISO string.
+
+    KL4040 headers carry BOTH, and they are not the same clock. Verified on
+    real frames:
+
+        DATE-OBS = 2025-10-14T00:34:15      (Iran local)
+        DATE     = 2025-10-13T21:04:17      (UT)
+
+    -- exactly 3 h 30 m apart, the Iran offset, and note they fall on
+    different calendar DAYS. The app's own light-curve dialog already labels
+    them "Local (DATE-OBS)" and "UT (DATE)".
+
+    This function used to prefer DATE-OBS and hand it to Time(scale='utc'),
+    which put every airmass 3 h 30 m out in hour angle -- 52 degrees of Earth
+    rotation -- and made the fitted extinction coefficient meaningless.
+
+    Deciding between them: FITS defines DATE as the file's UT creation time
+    and DATE-OBS as the UT start of the observation, so DATE-OBS is normally
+    the right key. But when the two differ by a clean civil timezone offset
+    they are plainly the same instant on two clocks, and the one the camera
+    labelled DATE is the UT one. An arbitrary difference means DATE really is
+    a file-creation stamp, and DATE-OBS wins. Returns None when neither key is
+    usable.
     """
     if hdr is None:
         return None
-    # candidate keys to try:
-    keys = ['DATE']
-    for k in keys:
-        val = hdr.get(k, None)
-        if val is None:
-            continue
-        # header may be bytes
-        try:
-            s = val.decode('utf-8') if isinstance(val, bytes) else str(val)
-        except Exception:
-            s = str(val)
-        s = s.strip()
-        if not s:
-            continue
-        # try regex to pull the front ISO-like token
-        m = _iso_like_re.search(s)
-        if m:
-            token = m.group(1)
-            return token
-        # fallback: split at whitespace and take first token
-        token = s.split()[0]
-        # remove surrounding quotes
-        token = token.strip("'\"")
-        # quick check: should contain '-' and ':'
-        if '-' in token and ':' in token:
-            return token
-    return None
+
+    tokens = {k: _iso_token(hdr.get(k)) for k in ('DATE', 'DATE-OBS')}
+    tokens = {k: v for k, v in tokens.items() if v}
+    if not tokens:
+        return None
+    if len(tokens) == 1:
+        return next(iter(tokens.values()))
+
+    try:
+        t_date = Time(tokens['DATE'])
+        t_obs = Time(tokens['DATE-OBS'])
+    except Exception:
+        return tokens['DATE-OBS']
+
+    delta_h = float((t_obs - t_date).to_value('hour'))
+    if abs(delta_h) < 1.0 / 60.0:
+        return tokens['DATE']
+    if _is_timezone_offset(delta_h):
+        return tokens['DATE']
+    return tokens['DATE-OBS']
+
 
 def _parse_skycoord(ra_in, dec_in) -> Optional[SkyCoord]:
     """
     Try to create an astropy SkyCoord robustly given ra/dec inputs.
-    Accepts strings like "22h15m", "+51d35m", or numeric degrees.
+    Accepts decimal degrees ("45.3", "+51.6"), sexagesimal hourangle RA
+    ("22:15:30", "22h15m30s"), or a combined free-form string.
+
+    Plain decimal values are ALWAYS interpreted as degrees: trying
+    hourangle first (the old behavior) silently misreads e.g. ra="45.3"
+    as 45.3 HOURS.
     """
+    ra_s = str(ra_in).strip()
+    dec_s = str(dec_in).strip()
+    # 1) plain decimal -> degrees
     try:
-        # try hourangle for RA, degrees for Dec (common)
-        sc = SkyCoord(ra=ra_in, dec=dec_in, unit=(u.hourangle, u.deg))
-        return sc
+        return SkyCoord(ra=float(ra_s), dec=float(dec_s), unit=(u.deg, u.deg))
+    except (ValueError, TypeError):
+        pass
+    # 2) sexagesimal / explicit hour markers -> hourangle RA, degree Dec
+    try:
+        if ':' in ra_s or 'h' in ra_s.lower():
+            return SkyCoord(ra=ra_s, dec=dec_s, unit=(u.hourangle, u.deg))
     except Exception:
         pass
+    # 3) free-form combined string
     try:
-        # try both degrees
-        sc = SkyCoord(ra=ra_in, dec=dec_in, unit=(u.deg, u.deg))
-        return sc
-    except Exception:
-        pass
-    try:
-        # try letting SkyCoord parse strings (one-argument style)
-        sc = SkyCoord(f"{ra_in} {dec_in}", frame='icrs')
-        return sc
+        return SkyCoord(f"{ra_s} {dec_s}", frame='icrs')
     except Exception:
         return None
 
@@ -85,7 +137,9 @@ def compute_airmass_for_files(files: List[str],
                               indices: List[int],
                               ra: str, dec: str,
                               latitude: float, longitude: float,
-                              elevation_m: float = 0.0) -> Tuple[List[dict], List[str]]:
+                              elevation_m: float = 0.0,
+                              use_exposure_midpoint: bool = True
+                              ) -> Tuple[List[dict], List[str]]:
     """
     For selected frames (files[index]), parse header time and compute airmass for given RA/Dec and location.
 
@@ -118,7 +172,7 @@ def compute_airmass_for_files(files: List[str],
             continue
         dt = get_datetime_from_header(hdr)
         if dt is None:
-            errors.append(f"No DATE-OBS-like header found in {fp}.")
+            errors.append(f"No DATE-OBS-like header found in {os.path.basename(fp)}.")
             continue
         # parse Time robustly
         try:
@@ -131,10 +185,23 @@ def compute_airmass_for_files(files: List[str],
             except Exception as e:
                 errors.append(f"Failed to parse time '{dt}' in {fp}: {e}")
                 continue
+
+        # The header time is the START of the exposure. Airmass changes across
+        # a 58 s INO340 frame, and near the horizon it changes fast, so the
+        # airmass that belongs with the frame's flux is the one at mid-exposure.
+        exptime_s = get_exptime_seconds(hdr, default=None)
+        t_start = t
+        if use_exposure_midpoint and exptime_s and exptime_s > 0:
+            t = t + (0.5 * float(exptime_s)) * u.s
         # altaz frame
         altaz = sc.transform_to(AltAz(obstime=t, location=loc))
         alt = altaz.alt.to(u.deg).value
         zenith = 90.0 - alt
+        # Reject frames where the target is at/below the horizon -- sec(z)
+        # is meaningless there (negative or diverging).
+        if alt <= 0.0:
+            errors.append(f"Target below horizon (alt={alt:.1f} deg) in {os.path.basename(fp)}; skipped.")
+            continue
         # airmass using simple secant(zenith). For large zenith angles (>75 deg) this is inaccurate, but acceptable here.
         rad = math.radians(zenith)
         # protect against cos = 0
@@ -148,6 +215,8 @@ def compute_airmass_for_files(files: List[str],
             'filename': os.path.basename(fp),
             'filepath': fp,
             'time_str_header': dt,
+            'time_start_iso': t_start.isot,
+            'exptime_s': (float(exptime_s) if exptime_s else None),
             'time_iso': t.isot,
             'alt_deg': alt,
             'zenith_deg': round(zenith, 3),
@@ -179,14 +248,32 @@ def fit_mag_vs_airmass(mags: List[float], errs: Optional[List[float]], airmasses
         if w is None:
             p, cov = np.polyfit(x, y, 1, cov=True)
         else:
-            p, cov = np.polyfit(x, y, 1, w=w, cov=True)
+            # cov='unscaled': our weights are 1/sigma with sigma = ABSOLUTE
+            # photometric uncertainties (mag_err), so the covariance must not
+            # be rescaled by reduced chi-square (the cov=True default treats
+            # weights as merely relative and would silently rescale k_err).
+            p, cov = np.polyfit(x, y, 1, w=w, cov='unscaled')
         # p: [slope, intercept] from polyfit? Actually polyfit returns highest-first: p[0]*x + p[1]
         slope = float(p[0])
         intercept = float(p[1])
         # uncertainties are sqrt of diagonal
         unc = np.sqrt(np.diag(cov)).tolist()
         slope_err, intercept_err = float(unc[0]), float(unc[1])
-        return dict(slope=slope, intercept=intercept, cov=cov.tolist(), slope_err=slope_err, intercept_err=intercept_err)
+        out = dict(slope=slope, intercept=intercept, cov=cov.tolist(),
+                   slope_err=slope_err, intercept_err=intercept_err,
+                   chi2_nu=None, slope_err_scaled=None, intercept_err_scaled=None)
+        # How well the line fits the error bars. The errors above trust the
+        # error bars; when the points scatter more than they allow (clouds,
+        # transparency drift: chi2_nu = 34.5 on one GRB 251013C star, k_err
+        # reported 6x too small) the scaled errors, err * sqrt(chi2_nu), are
+        # the honest ones. Both are returned; the caller shows both.
+        if w is not None and x.size > 2:
+            chi2 = float(np.sum(((y - (slope * x + intercept)) * w) ** 2))
+            chi2_nu = chi2 / (x.size - 2)
+            out.update(chi2_nu=chi2_nu,
+                       slope_err_scaled=slope_err * float(np.sqrt(chi2_nu)),
+                       intercept_err_scaled=intercept_err * float(np.sqrt(chi2_nu)))
+        return out
     except Exception:
         # fallback to manual least-squares
         if w is None:
@@ -225,6 +312,9 @@ def build_results_json(ra, dec, filtername, latitude, longitude, per_frame_resul
             'slope_err': fit_result.get('slope_err'),
             'intercept': fit_result.get('intercept'),
             'intercept_err': fit_result.get('intercept_err'),
+            'chi2_nu': fit_result.get('chi2_nu'),
+            'slope_err_scaled': fit_result.get('slope_err_scaled'),
+            'intercept_err_scaled': fit_result.get('intercept_err_scaled'),
             'cov': fit_result.get('cov')
         }
     }
